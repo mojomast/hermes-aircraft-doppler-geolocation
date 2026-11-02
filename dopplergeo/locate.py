@@ -248,6 +248,17 @@ def locate(
             "levels": [{"step_m": L["step"], "points": len(L["x"])} for L in lv],
         },
     )
+    # confidence: a point resting on one event's fit is a guess, not a fix
+    nm = score.n_consistent_matches(best.get("matches") or [])
+    best["n_consistent_events"] = nm
+    best["confidence"] = "ok" if nm >= 2 else "low"
+    if nm < 2:
+        rep["warning"] = (
+            f"only {nm} event(s) consistently matched an aircraft; the point is "
+            "low-confidence -- treat the 95% area (widened to the search region) "
+            "as the answer"
+        )
+        rep["credible_area_km2"]["95_low_conf"] = float(np.pi * rad_km**2)
     rep["files"]["heatmap_png"] = str(out / "heatmap.png")
     plot_heatmap(res, planes, lat0, lon0, str(out / "heatmap.png"), best)
     return _finish(rep, out)

@@ -10,6 +10,7 @@ tone. No hand-picked band or window is needed.
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import tempfile
@@ -218,6 +219,24 @@ def _refine_lines(f, t, Z, f0_track, frames, kmax, fmax):
         if len(tt) > 8:
             lines[k] = (np.array(tt), np.array(ff), np.array(zz))
     return lines
+
+
+def _fix_subharmonic(lines):
+    """Relabel a harmonic family picked at a sub-harmonic of the true f0.
+
+    The harmonic sum can lock onto f0/2 (or f0/3) when only every 2nd (3rd) line
+    of the candidate family has support, e.g. lines {2, 4, 6}: the true family is
+    {1, 2, 3} at twice the frequency. Prefer the f0 whose multiples carry the
+    support: divide the line indices by their gcd.
+    """
+    if not lines:
+        return lines
+    g = 0
+    for k in lines:
+        g = math.gcd(g, int(k))
+    if g <= 1:
+        return lines
+    return {int(k) // g: v for k, v in lines.items()}
 
 
 def _family_fit(lines, c):
@@ -461,6 +480,7 @@ def detect_events(
         f0_track = ndimage.median_filter(f0_grid[bins], size=5)
         lines = _refine_lines(f, t, Z, f0_track, frames, kmax, fmax)
         lines = {k: v for k, v in lines.items() if np.median(v[2]) > 2.0}
+        lines = _fix_subharmonic(lines)
         if not lines:
             rejected.append(
                 {

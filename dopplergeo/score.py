@@ -64,6 +64,12 @@ class Options:
     detect_prob: float = 0.3
     marginalize: bool = True  # sum, not max, over candidate aircraft per event
     span_tol: float = 0.05  # prefilter: |log Doppler span(pred/obs)| allowed
+    # CPA-distance consistency: the event's own fitted CPA slant vs the pass's
+    # slant range at CPA, Gaussian in log-ratio (detector range estimates are
+    # loose, d trades off against speed, so the tolerance is a factor ~e).
+    cpa_log_sd: float = 1.0
+    cpa_floor_m: float = 150.0  # below this both ranges are "overhead"
+    cpa_weight: float = 1.0  # 0 disables the term
     n_seeds: int = 10  # coarse-level basins refined (flat likelihoods need more)
 
 
@@ -244,6 +250,19 @@ def event_weight(ev, opts: Options) -> float:
     return min(opts.hop_over_win, n_eff / n)
 
 
+def cpa_consistency(ev, r_pass_m, opts: Options) -> float:
+    """Log-likelihood term: event CPA-slant estimate vs pass slant at CPA."""
+    if opts.cpa_weight <= 0:
+        return 0.0
+    d_ev = getattr(ev, "cpa_slant_m", None)
+    if d_ev is None or not np.isfinite(d_ev) or r_pass_m is None:
+        return 0.0
+    a = max(abs(float(d_ev)), opts.cpa_floor_m)
+    b = max(float(r_pass_m), opts.cpa_floor_m)
+    z = np.log(a / b) / opts.cpa_log_sd
+    return float(-0.5 * opts.cpa_weight * z * z)
+
+
 def miss_cost(ev, opts: Options) -> float:
     """Log-likelihood cost of an event no pass explains.
 
@@ -329,6 +348,7 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                     continue
                 ll, T0, sc = event_pass_loglik(ev, planes[pi], gxyz[i], k, tr, c, opts)
                 if np.isfinite(ll):
+                    ll += cpa_consistency(ev, rm, opts)
                     chi2 = -2.0 * ll / (event_weight(ev, opts) * len(ev.times))
                     cand.append((ll, T0, pi, rm, sc, chi2))
             per_ev.append(cand)
@@ -389,10 +409,25 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                     "cpa_slant_m": rm,
                     "f0_scale": sc,
                     "chi2nu": ch,
+                    "event_cpa_slant_m": float(events[e_i].cpa_slant_m),
+                    "cpa_ok": bool(
+                        cpa_consistency(events[e_i], rm, opts) > -2.0
+                        or opts.cpa_weight <= 0
+                    ),
                 }
                 for e_i, pi, rm, sc, ch in best[2]
             ]
     return PointResult(logl, t0, matches)
+
+
+def n_consistent_matches(matches, chi2_max=6.0, opts: Options | None = None):
+    """Matched events whose Doppler fit is decent and CPA range is consistent."""
+    n = 0
+    for m in matches:
+        ch = m.get("chi2nu", np.inf)
+        if np.isfinite(ch) and ch <= chi2_max and m.get("cpa_ok", True):
+            n += 1
+    return n
 
 
 def grid(cx, cy, half, step):
