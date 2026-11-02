@@ -38,6 +38,7 @@ class Options:
         2500.0  # a tonal pass this close during the clip should be heard
     )
     silence_penalty: float = 6.0
+    miss_null: bool = False  # miss cost vs a no-Doppler null (flatter; see notes)
     miss_penalty: float = (
         1.0  # x (cost of an all-outlier fit) for an event with no consistent pass
     )
@@ -63,6 +64,7 @@ class Options:
     detect_prob: float = 0.3
     marginalize: bool = True  # sum, not max, over candidate aircraft per event
     span_tol: float = 0.05  # prefilter: |log Doppler span(pred/obs)| allowed
+    n_seeds: int = 10  # coarse-level basins refined (flat likelihoods need more)
 
 
 @dataclass
@@ -243,20 +245,23 @@ def event_weight(ev, opts: Options) -> float:
 def miss_cost(ev, opts: Options) -> float:
     """Log-likelihood cost of an event no pass explains.
 
-    The alternative to "this aircraft" is a no-Doppler null (constant tone at the
-    same sigma), not "every sample is an outlier": a noisy or nearly flat event
-    then carries little weight, because the null explains it almost as well as
-    any pass would. Capped at the all-outlier cost.
+    Default: the all-outlier cost over the event's effective samples. With
+    miss_null=True the alternative is a no-Doppler null (constant tone at the same
+    sigma), which down-weights noisy/flat events; on the Carlsbad real-world clip
+    this made the surface too flat (7.4 km vs 1.0 km error), so it is off.
     """
+    w = event_weight(ev, opts)
+    full = 8.0 * w * len(ev.times)
+    if not opts.miss_null:
+        return opts.miss_penalty * full
     o = np.asarray(ev.ratio, float)
     o = o[np.isfinite(o)]
     if len(o) == 0:
         return 0.0
     sigma = event_sigma(ev, opts)
     res = np.clip(o - np.median(o), -4 * sigma, 4 * sigma)
-    w = event_weight(ev, opts)
     null = 0.5 * float((res**2).sum()) / sigma**2 * w
-    return opts.miss_penalty * min(null, 8.0 * w * len(ev.times))
+    return opts.miss_penalty * min(null, full)
 
 
 def silence_cost(rm, opts: Options) -> float:
@@ -474,7 +479,7 @@ def search(
             if all(np.hypot(x[j] - px, y[j] - py) > 3 * step for px, py in picked):
                 picked.append((x[j], y[j]))
                 centers.append((x[j], y[j], 3 * step if li + 1 < len(steps) else step))
-            if len(picked) >= (5 if li == 0 else 3):
+            if len(picked) >= (opts.n_seeds if li == 0 else max(3, opts.n_seeds // 2)):
                 break
         if li + 1 < len(steps):
             centers = [(cx, cy, 3 * step) for cx, cy, _ in centers]
