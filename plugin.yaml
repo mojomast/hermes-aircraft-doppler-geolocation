@@ -1,5 +1,5 @@
 name: aircraft-doppler-geolocation
-version: "0.1.0"
+version: "0.1.1"
 description: >-
   Find aircraft flyover Doppler curves in a recording, fit speed and distance,
   and score candidate locations against ADS-B tracks you supply. Local only:

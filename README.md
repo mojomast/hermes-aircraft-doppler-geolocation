@@ -12,7 +12,7 @@ One skill, `aircraft-doppler-geolocation:aircraft-doppler-geolocation`, and thre
 
 | Script | Job |
 | --- | --- |
-| `doppler_track.py` | Decode audio/video with ffmpeg, trace the flyover tone on a narrow-band spectrogram (Viterbi ridge), and fit base tone, speed, closest-approach slant distance, and closest-approach time. Writes CSV, PNG, JSON. |
+| `doppler_track.py` | Decode audio/video with ffmpeg, trace the flyover tone on a narrow-band spectrogram (Viterbi ridge), and fit base tone, speed, closest-approach slant distance, and closest-approach time. Writes CSV, PNG, JSON with a `detected` flag, `ridge_snr_z`, and `rejected_because`. Options `--min-snr` and `--max-slope`. |
 | `score_candidates.py` | For a real flight track (ADS-B CSV) and candidate points (lat, lon, ground elevation), model the exact curve each point would hear using the velocity at emission time, and rank points by misfit in Hz. `--plot` writes a heatmap. |
 | `make_synthetic_test.py` | Offline self-test: synthetic curved flyover buried in noise, fit, then locate the observer on a grid. |
 
@@ -63,10 +63,33 @@ Images below come from real runs of the scripts on the synthetic self-test, not 
 
 A synthetic propeller tone (110 Hz, 80 m/s, 900 m altitude, gently turning) with tone amplitude 0.29 against noise σ 1.0 is recovered as f0 110.0 Hz, 80.4 m/s, slant 1039 m (true 1040 m). With the recording start known to ±2 s, the true grid point ranks first (0 m error on a 200 m grid). Without a known time, a single flyover lands at the right distance but about 1.4 km off along the track, which is the ambiguity the video describes. A second flyover at a fixed offset, or a known time, is required.
 
+## Real-world test (v0.1.1)
+
+Run on 5 public YouTube clips (audio only), 2026-11-02:
+
+| Clip | Result |
+| --- | --- |
+| [Planes Flying Overhead While the Birds Sing](https://www.youtube.com/watch?v=G0fjcT-SP1o) (City Limits Sound) | 2 flyovers detected: 94.9 Hz, 59 m/s, 1.53 km, 1.27 Hz rms; and 247.6 Hz (2nd harmonic), 97 m/s, 2.08 km, 0.61 Hz rms. The two harmonics of pass 2 disagree on speed by about 8%, so treat the stderr as optimistic. |
+| [Cessna 421 takeoff, Puerto Princesa](https://www.youtube.com/watch?v=DqZ2411R1ys) (Palawan Skies Aviation) | Detected in 85-145 Hz: 109.4 Hz, 63 m/s (~122 kt), 295 m. A higher band failed: the tracker hops between crossing harmonics. |
+| [Cessna Conquest 425 flyby, Hannover](https://www.youtube.com/watch?v=yltKJzPAcb4) (HD1080ide) | Rejected. The plane was turning, so the straight-pass model does not apply. |
+| [Evening City Ambience in Amsterdam](https://www.youtube.com/watch?v=VZDnXSN6Cgg) (Jeronimo Ambience) | No detections. |
+| [Outdoor atmosphere with plane flying over](https://www.youtube.com/watch?v=aeC-UfLcxqk) (Your Film Sounds) | Broadband roar with no tone. 0.1.0 reported a false fit here; 0.1.1 rejects it (`ridge_snr_z` 1.7). |
+
+![Real-world fit: City Limits Sound clip, pass 2](docs/screenshots/realworld-g0-pass2.png)
+
+*Spectrogram of audio from City Limits Sound's video [Planes Flying Overhead While the Birds Sing in the Distance](https://www.youtube.com/watch?v=G0fjcT-SP1o), with the traced ridge and fit.*
+
+![Real-world fit: Cessna 421 takeoff](docs/screenshots/realworld-cessna421.png)
+
+*Spectrogram of audio from Palawan Skies Aviation's video [Cessna 421 Golden Eagle takeoff at Puerto Princesa](https://www.youtube.com/watch?v=DqZ2411R1ys).*
+
+The tracker works on clean real tones. You still pick the frequency band and time window by eye from a spectrogram, and the `detected` flag is the guard against noise. Real tones scored 2.7 to 3.6 on `ridge_snr_z` and noise scored 1.7 to 2.0, so the margin is narrow. Geolocation scoring could not be tested: none of the clips gives a recording date or time, and no free historical ADS-B was used.
+
 ## Limitations
 
 - ADS-B fetch, jet-type filtering, DEM lookup, the time-offset and silence filters, and grid generation are described in the skill but **not scripted** yet.
-- Tested on synthetic data only. Not validated on a real recording plus real ADS-B.
+- Detection is tested on real audio (above), but you choose the band by hand. Location scoring is tested on synthetic data only, not on real ADS-B.
+- Harmonics that cross each other and turning flights break the tracker or the straight-pass fit.
 - Needs ADS-B coverage, a date, and serious compute for large search areas.
 
 ## Ethics
