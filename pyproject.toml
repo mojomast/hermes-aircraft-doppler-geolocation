@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-aircraft-doppler-geolocation"
+version = "0.1.0"
+description = "Hermes plugin: geolocate recordings from aircraft Doppler curves and ADS-B tracks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kyle Durepos" }]
+keywords = ["hermes", "osint", "geolocation", "doppler", "ads-b"]
+dependencies = [
+  "numpy>=1.26,<2.6",
+  "scipy>=1.11,<1.19",
+  "soundfile>=0.12,<0.15",
+  "matplotlib>=3.8,<3.12",
+]
+
+[project.optional-dependencies]
+dev = ["pyyaml>=6,<7"]
+
+[project.urls]
+Homepage = "https://github.com/mojomast/hermes-aircraft-doppler-geolocation"
+
+[tool.setuptools]
+py-modules = []
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["N999"]  # plugin entrypoint lives at the repo root by Hermes convention

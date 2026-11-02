@@ -1,0 +1,26 @@
+name: aircraft-doppler-geolocation
+version: "0.1.0"
+description: >-
+  Find aircraft flyover Doppler curves in a recording, fit speed and distance,
+  and score candidate locations against ADS-B tracks you supply. Local only:
+  no network, no credentials.
+author: mojomast
+license: MIT
+homepage: https://github.com/mojomast/hermes-aircraft-doppler-geolocation
+tags:
+  - osint
+  - geolocation
+  - audio
+  - skills
+manifest_version: 2
+api_version: 1
+provides_tools: []
+provides_hooks: []
+provides_middleware: []
+requires_env: []
+# Kept in step with pyproject.toml. pyproject.toml is what Hermes installs.
+python_dependencies:
+  - "numpy>=1.26,<2.6"
+  - "scipy>=1.11,<1.19"
+  - "soundfile>=0.12,<0.15"
+  - "matplotlib>=3.8,<3.12"
