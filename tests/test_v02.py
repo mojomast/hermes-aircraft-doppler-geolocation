@@ -223,7 +223,7 @@ class ScoringTests(unittest.TestCase):
 
     def test_silence_penalty_charges_unheard_close_pass(self):
         g = np.array([[*score.to_enu(self.obs[0], self.obs[1], LAT0, LON0), 151.5]])
-        on = score.Options()
+        on = score.Options(detect_prob=0.9)
         off = score.Options(silence_penalty=0.0)
         with_pen = score.score_points(
             self.events[:1], self.planes, g, 343.0, on, None, 420
@@ -232,7 +232,38 @@ class ScoringTests(unittest.TestCase):
             self.events[:1], self.planes, g, 343.0, off, None, 420
         ).logl[0]
         # only event B kept: plane A's close pass inside the clip is unexplained and costs
-        self.assertLess(with_pen, no_pen - 1.0)
+        self.assertLess(with_pen, no_pen - 0.3)
+        # Bernoulli silence: a lower detection probability costs less
+        lo = score.score_points(
+            self.events[:1],
+            self.planes,
+            g,
+            343.0,
+            score.Options(detect_prob=0.05),
+            None,
+            420,
+        ).logl[0]
+        self.assertGreater(lo, with_pen)
+        self.assertLess(lo, no_pen)
+
+    def test_likelihood_is_tempered_by_correlation_time(self):
+        ev = self.events[0]
+        o = score.Options()
+        w = score.event_weight(ev, o)
+        self.assertLessEqual(w, o.hop_over_win)
+        span = ev.times[-1] - ev.times[0]
+        self.assertAlmostEqual(w * len(ev.times), max(3.0, span / o.corr_s), delta=1e-6)
+        self.assertGreater(score.event_sigma(ev, o), o.sigma_model - 1e-12)
+
+    def test_rest_frequency_scale_at_bound_rejects_pass(self):
+        g = np.array([[*score.to_enu(self.obs[0], self.obs[1], LAT0, LON0), 151.5]])
+        tight = score.Options(scale_bounds=(0.99, 1.0))
+        import copy
+
+        ev = copy.deepcopy(self.events[0])
+        ev.ratio = list(np.asarray(ev.ratio) * 1.2)  # far outside the tight bounds
+        r = score.score_points([ev], self.planes, g, 343.0, tight, None, 420)
+        self.assertFalse(r.matches[0])
 
 
 class LocateTests(unittest.TestCase):

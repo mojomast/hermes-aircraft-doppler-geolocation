@@ -44,9 +44,24 @@ class Options:
     dt_tol_s: float = 6.0  # clock / CPA-time slack per event
     dt_step_s: float = 0.5
     sigma_floor: float = 0.003  # Doppler-ratio noise floor (0.3% ~ 0.4 Hz at 130 Hz)
-    hop_over_win: float = 0.25  # detector hop / window: effective independent samples
+    # Model error (ADS-B position/time error, ~20 s track sampling, wind, altitude
+    # reference) adds to the detector noise and is correlated over seconds, so
+    # the likelihood uses sigma = hypot(detector, model) and counts one
+    # independent sample per corr_s seconds of event, not one per frame.
+    sigma_model: float = 0.004
+    corr_s: float = 4.0
+    hop_over_win: float = 0.25  # cap: never more than this fraction of frames
     include_jets: bool = False
-    scale_bounds: tuple = (0.85, 1.15)
+    scale_bounds: tuple = (0.7, 1.3)
+    scale_prior_sd: float = (
+        0.08  # Gaussian prior on rest-frequency scale (type table error)
+    )
+    # P(detector picks up a tonal pass at 0 m); decays linearly to 0 at r_silence_m.
+    # Silence is scored as a Bernoulli miss, -log(1 - pd), so a recording with
+    # commentary/music (low recall) is not pushed away from busy traffic.
+    detect_prob: float = 0.3
+    marginalize: bool = True  # sum, not max, over candidate aircraft per event
+    span_tol: float = 0.05  # prefilter: |log Doppler span(pred/obs)| allowed
 
 
 @dataclass
@@ -175,7 +190,7 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
     D = predicted_ratio(pl, g, t_abs, c, k_cpa, half)
     if D is None:
         return -np.inf, None, None
-    sigma = max(ev.sigma_ratio * 0.5, opts.sigma_floor)
+    sigma = event_sigma(ev, opts)
     valid = ~np.isnan(D)
     frac = valid.mean(axis=1)
     Dz = np.where(valid, D, 0.0)
@@ -192,6 +207,7 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
         den = (w * Dz * Dz).sum(1)
         s = np.where(den > 0, num / np.maximum(den, 1e-12), s)
     s = np.clip(s, *opts.scale_bounds)
+    hit_bound = (s <= opts.scale_bounds[0] + 1e-9) | (s >= opts.scale_bounds[1] - 1e-9)
     res = np.where(valid, oz - s[:, None] * Dz, 0.0)
     res = np.clip(
         res, -4 * sigma, 4 * sigma
@@ -200,10 +216,56 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
     n = valid.sum(1)
     # samples outside the modelled span count as full outliers
     rss = rss + (len(times) - n) * (4 * sigma) ** 2
-    ll = -0.5 * rss / sigma**2 * opts.hop_over_win
+    ll = -0.5 * rss / sigma**2 * event_weight(ev, opts)
+    ll -= 0.5 * ((s - 1.0) / opts.scale_prior_sd) ** 2
     ll[frac < 0.5] = -np.inf
+    ll[hit_bound] = -np.inf  # scale outside the plausible range: not this aircraft
     j = int(np.argmax(ll))
     return float(ll[j]), float(T0s[j]), float(s[j])
+
+
+def event_sigma(ev, opts: Options) -> float:
+    return float(
+        np.hypot(max(ev.sigma_ratio * 0.5, opts.sigma_floor), opts.sigma_model)
+    )
+
+
+def event_weight(ev, opts: Options) -> float:
+    """Effective independent samples per frame (residuals are time-correlated)."""
+    n = max(len(ev.times), 1)
+    t = np.asarray(ev.times)
+    span = float(t.max() - t.min()) if n > 1 else 0.0
+    n_eff = max(3.0, span / opts.corr_s)
+    return min(opts.hop_over_win, n_eff / n)
+
+
+def miss_cost(ev, opts: Options) -> float:
+    """Log-likelihood cost of an event no pass explains (all samples outliers)."""
+    return opts.miss_penalty * 8.0 * event_weight(ev, opts) * len(ev.times)
+
+
+def silence_cost(rm, opts: Options) -> float:
+    pd = opts.detect_prob * max(0.0, 1.0 - rm / opts.r_silence_m)
+    return float(-np.log1p(-min(pd, 0.999)))
+
+
+def _obs_span(ev):
+    o = np.asarray(ev.ratio)
+    o = o[np.isfinite(o) & (o > 0)]
+    return float(np.log(o.max() / o.min())) if len(o) > 2 else 0.0
+
+
+def _pass_span(pl, g, k, half, c):
+    lo, hi = max(0, k - int(half)), min(len(pl.tau), k + int(half) + 1)
+    if hi - lo < 3:
+        return None
+    pos = pl.pos[lo:hi]
+    d = pos - g
+    r = np.linalg.norm(d, axis=1)
+    vel = np.gradient(pos, pl.tau[lo:hi], axis=0)
+    vr = -np.sum(d * vel, axis=1) / np.maximum(r, 1.0)
+    D = c / (c - vr)
+    return float(np.log(D.max() / D.min()))
 
 
 def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_dur=None):
@@ -214,6 +276,7 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
     t0 = np.full(n, np.nan)
     matches = [None] * n
     clip_dur = clip_dur or (max(e.t_end for e in events) + 5 if events else 0)
+    spans = {id(e): _obs_span(e) for e in events}
     for i in range(n):
         P = passes[i]
         if not P:
@@ -228,9 +291,16 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                     t0_window[0] - opts.dt_tol_s <= T0c <= t0_window[1] + opts.dt_tol_s
                 ):
                     continue
+                # cheap scale-free prefilter: the predicted Doppler span over the
+                # event's duration must be able to cover the observed span
+                half = (ev.times[-1] - ev.times[0]) / 2 + opts.dt_tol_s
+                sp = _pass_span(planes[pi], gxyz[i], k, half, c)
+                if sp is None or sp + opts.span_tol < spans[id(ev)]:
+                    continue
                 ll, T0, sc = event_pass_loglik(ev, planes[pi], gxyz[i], k, tr, c, opts)
                 if np.isfinite(ll):
-                    cand.append((ll, T0, pi, rm, sc))
+                    chi2 = -2.0 * ll / (event_weight(ev, opts) * len(ev.times))
+                    cand.append((ll, T0, pi, rm, sc, chi2))
             per_ev.append(cand)
         hyps = sorted({round(cnd[1], 1) for cand in per_ev for cnd in cand})
         best = (-np.inf, None, None)
@@ -249,23 +319,24 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                 ]
                 if ok:
                     b = max(ok, key=lambda z: z[0])
-                    tot += b[0]
-                    used.append((e_i, b[2], b[3], b[4]))
+                    if opts.marginalize:
+                        # association ambiguity: sum over candidate aircraft and the
+                        # "not in ADS-B / not this pass" alternative instead of the max
+                        alts = [z[0] for z in ok] + [-miss_cost(events[e_i], opts)]
+                        tot += float(np.logaddexp.reduce(alts))
+                    else:
+                        tot += b[0]
+                    used.append((e_i, b[2], b[3], b[4], b[5]))
                 else:
                     # as bad as a fit where every sample is an outlier (0.5 * 4^2 per effective sample)
-                    tot -= (
-                        opts.miss_penalty
-                        * 8.0
-                        * opts.hop_over_win
-                        * len(events[e_i].times)
-                    )
+                    tot -= miss_cost(events[e_i], opts)
             # silence: close tonal passes inside the clip that no event explains
             used_pl = {u[1] for u in used}
             for pi, _k, rm, tr in P:
                 if pi in used_pl or rm > opts.r_silence_m:
                     continue
                 if T0h <= tr <= T0h + clip_dur:
-                    tot -= opts.silence_penalty * (1.0 - rm / opts.r_silence_m)
+                    tot -= opts.silence_penalty / 6.0 * silence_cost(rm, opts)
             if tot > best[0]:
                 best = (tot, T0h, used)
         logl[i], t0[i] = best[0], (best[1] if best[1] is not None else np.nan)
@@ -278,8 +349,9 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                     "class": planes[pi].cls,
                     "cpa_slant_m": rm,
                     "f0_scale": sc,
+                    "chi2nu": ch,
                 }
-                for e_i, pi, rm, sc in best[2]
+                for e_i, pi, rm, sc, ch in best[2]
             ]
     return PointResult(logl, t0, matches)
 
@@ -289,6 +361,21 @@ def grid(cx, cy, half, step):
     ys = np.arange(cy - half, cy + half + 1e-6, step)
     X, Y = np.meshgrid(xs, ys)
     return X.ravel(), Y.ravel()
+
+
+def birge_temperature(res: PointResult) -> float:
+    """Likelihood temperature from the best point's reduced chi-square (Birge ratio).
+
+    If matched events fit worse than the assumed sigma allows (chi2/nu > 1), the
+    noise model is too optimistic and the posterior is flattened by that factor.
+    """
+    fin = np.isfinite(res.logl)
+    if not fin.any():
+        return 1.0
+    j = int(np.argmax(np.where(fin, res.logl, -np.inf)))
+    m = res.matches[j] or []
+    ch = [x["chi2nu"] for x in m if np.isfinite(x.get("chi2nu", np.nan))]
+    return float(max(1.0, np.median(ch))) if ch else 1.0
 
 
 def posterior(logl, cell_area_m2):
@@ -338,12 +425,13 @@ def search(
         g = np.c_[x, y, z]
         # coarse levels: temper the likelihood so a slightly-off grid point still ranks
         o = Options(
-            **{**opts.__dict__, "sigma_floor": opts.sigma_floor * (step / 50.0) ** 0.5}
+            **{**opts.__dict__, "sigma_model": opts.sigma_model * (step / 50.0) ** 0.5}
         )
         res = score_points(events, planes, g, c, o, t0_window, clip_dur)
         if progress:
             progress(li, len(g))
-        p, a68, a95 = posterior(res.logl, step * step)
+        temp = birge_temperature(res)
+        p, a68, a95 = posterior(res.logl / temp, step * step)
         levels.append(
             {
                 "step": step,
@@ -355,6 +443,7 @@ def search(
                 "t0": res.t0,
                 "matches": res.matches,
                 "p": p,
+                "temperature": temp,
                 "a68_m2": a68,
                 "a95_m2": a95,
             }
