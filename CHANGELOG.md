@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — unreleased
+
+- New `dopplergeo` package, CLI (`dopplergeo detect|locate`), and Hermes tools `doppler_detect` / `doppler_locate`.
+- Automatic detection: whitening, harmonic sum, CFAR, multi-ridge Viterbi, harmonic-family fit, segment linking, acceptance test.
+- Data fetching with cache and `--offline`: adsb.lol daily releases (streamed crop), tar1090-db types (jet filter), Copernicus GLO-30 DEM, Open-Meteo temperature.
+- Scoring against real track geometry, joint likelihood with silence penalty, coarse-to-fine posterior heatmap with credible regions, unknown-time handling via metadata and sliding offsets.
+- Tests: synthetic turning tracks, harmonic crossings, AAC/Opus round-trips, noise negatives; network tests behind `DOPPLER_GEO_NETWORK_TESTS=1`.
+- Plugin now makes network calls in `locate` (disclosed in README and SECURITY.md).
+
 ## 0.1.1 — 2026-11-02
 
 - `doppler_track.py` now gates its fit. The JSON gains `ridge_snr_z`, `detected`, and `rejected_because`; before this, the optimiser returned a plausible-looking fit even on noise or broadband jet roar.

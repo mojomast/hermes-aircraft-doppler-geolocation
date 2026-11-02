@@ -1,10 +1,36 @@
 # aircraft-doppler-geolocation
 
-Hermes plugin that locates where (and optionally when) a recording was made from the Doppler curves of aircraft flying over, often too faint to hear, matched against ADS-B flight tracks. It ships one skill and three local scripts.
+Hermes plugin that locates where (and optionally when) a recording was made from the Doppler curves of aircraft flying over, often too faint to hear, matched against ADS-B flight tracks. It ships one skill, two Hermes tools (`doppler_detect`, `doppler_locate`), a `dopplergeo` CLI, and three standalone scripts.
 
 It is a community plugin by [Kyle Durepos](https://github.com/mojomast). It is not a Nous Research product. The method comes from colsto's video [I discovered a sound that leaks your exact location (and it's everywhere)](https://www.youtube.com/watch?v=UytYrhYLOKI). The author released no code; these scripts are an independent implementation of the steps he describes, not his pipeline.
 
 ![Catalog banner](docs/catalog-banner.png)
+
+## New in 0.2.0: automatic pipeline
+
+```bash
+dopplergeo detect clip.wav --out ev/                          # find flyovers automatically
+dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --out run/
+dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --offline   # cache only
+```
+
+Python / Hermes tool: `locate(recording, date_hint=None, region_hint=None)`.
+
+- **Detection** (no hand-picked bands): whitened 1 s spectrogram, harmonic sum (k ≤ 6), CFAR, Viterbi multi-ridge tracking with an off state, a joint harmonic-family fit, segment linking across dropouts, and an acceptance test (F-test against a constant tone, frequency drop, plausible speed, closest approach inside the tone, non-degenerate distance).
+- **Data**: ADS-B from adsb.lol daily `globe_history` releases, streamed and cropped to your region and time window; only the crop is cached (`~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`). Aircraft types from tar1090-db (jets dropped by default, since they rarely give a tonal line). Copernicus GLO-30 elevation (flat-terrain fallback). Open-Meteo temperature sets the speed of sound.
+- **Scoring**: predicts each event's curve from the real track (turns included), with emission-time correction, a robust f0-scale fit, joint likelihood across events, and a penalty for close passes that were not heard. Coarse-to-fine grid (1000/200/50 m) gives a posterior heatmap with 68 %/95 % regions. Unknown recording time: file metadata (ffprobe creation_time, GPS tags, yt-dlp `.info.json`) or sliding offsets.
+
+![Synthetic heatmap](docs/screenshots/v02-heatmap-synthetic.png)
+![Automatic detection, real Cessna 421 clip](docs/screenshots/v02-auto-detect-cessna421.png)
+
+**Real-clip detection (0.2.0, automatic):** Cessna 421 clip: 1 event (49 m/s, 159 m CPA). "Planes overhead / birds" clip: 2 events (57 m/s at 1.4 km; 67 m/s at 1.1 km). Amsterdam city ambience, a 23 s jet clip, and the Conquest tower flyby: 0 events (expected: no clean tonal pass). An end-to-end real location with a known place and time has **not** been verified yet; the full pipeline is verified on synthetic data only (0 m grid error, start time within 0.3 s).
+
+### Data credits
+
+- ADS-B: [adsb.lol](https://adsb.lol), Open Database License (ODbL 1.0). Derived crops stay under ODbL.
+- Aircraft types: [wiedehopf/tar1090-db](https://github.com/wiedehopf/tar1090-db).
+- Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA.
+- Weather: [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
 
 ## What you get
 
@@ -18,10 +44,10 @@ One skill, `aircraft-doppler-geolocation:aircraft-doppler-geolocation`, and thre
 
 ## Disclosure
 
-- `register()` only calls `ctx.register_skill`. No tools, hooks, or middleware.
+- `register()` calls `ctx.register_skill` and `ctx.register_tool` for `doppler_detect` and `doppler_locate`. No hooks or middleware.
 - `doppler_track.py` runs `ffmpeg` (no shell) on the path you pass. Scripts read only the paths you pass and write the outputs you name.
-- No network calls, credentials, telemetry, or self-updater. The plugin does **not** fetch ADS-B or elevation data; the skill names sources (pyopensky, traffic, adsb.lol, ADS-B Exchange, OpenTopography) for you to use.
-- Enabling the plugin asks Hermes to install numpy, scipy, soundfile, and matplotlib (pinned ranges in `pyproject.toml`). Install `ffmpeg` yourself.
+- **Network (0.2.0, `locate` only, skipped with `--offline`)**: HTTPS GET to api.github.com / github.com (adsb.lol release assets, streamed; up to ~3 GB read per day, only the crop is stored), raw.githubusercontent.com (type table), copernicus-dem-30m.s3.amazonaws.com (DEM tiles), archive-api.open-meteo.com (temperature). No credentials, uploads, telemetry, or self-updater. `detect` and the scripts make no network calls.
+- Enabling the plugin asks Hermes to install numpy, scipy, soundfile, matplotlib, and tifffile (pinned ranges in `pyproject.toml`). Install `ffmpeg` yourself.
 
 Details are in [SECURITY.md](SECURITY.md).
 

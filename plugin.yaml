@@ -1,9 +1,9 @@
 name: aircraft-doppler-geolocation
-version: "0.1.1"
+version: "0.2.0"
 description: >-
-  Find aircraft flyover Doppler curves in a recording, fit speed and distance,
-  and score candidate locations against ADS-B tracks you supply. Local only:
-  no network, no credentials.
+  Detect aircraft flyover Doppler tones in a recording and estimate where it
+  was made by scoring them against adsb.lol ADS-B history. Downloads public
+  ADS-B, DEM and weather data (no account); offline mode uses the cache only.
 author: mojomast
 license: MIT
 homepage: https://github.com/mojomast/hermes-aircraft-doppler-geolocation
@@ -14,7 +14,9 @@ tags:
   - skills
 manifest_version: 2
 api_version: 1
-provides_tools: []
+provides_tools:
+  - doppler_detect
+  - doppler_locate
 provides_hooks: []
 provides_middleware: []
 requires_env: []
@@ -24,3 +26,4 @@ python_dependencies:
   - "scipy>=1.11,<1.19"
   - "soundfile>=0.12,<0.15"
   - "matplotlib>=3.8,<3.12"
+  - "tifffile>=2023.7.10,<2027"

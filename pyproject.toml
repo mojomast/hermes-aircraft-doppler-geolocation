@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-aircraft-doppler-geolocation"
-version = "0.1.1"
+version = "0.2.0"
 description = "Hermes plugin: geolocate recordings from aircraft Doppler curves and ADS-B tracks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,16 +16,23 @@ dependencies = [
   "scipy>=1.11,<1.19",
   "soundfile>=0.12,<0.15",
   "matplotlib>=3.8,<3.12",
+  "tifffile>=2023.7.10,<2027",
 ]
 
 [project.optional-dependencies]
 dev = ["pyyaml>=6,<7"]
+fast = ["orjson>=3.9,<4"]
+
+[project.scripts]
+dopplergeo = "dopplergeo.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/mojomast/hermes-aircraft-doppler-geolocation"
 
-[tool.setuptools]
-py-modules = []
+[tool.setuptools.packages.find]
+include = ["dopplergeo*"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["N999"]  # plugin entrypoint lives at the repo root by Hermes convention
+"dopplergeo/__main__.py" = ["N999"]  # repo dir name is not a module name
+"dopplergeo/*.py" = ["SIM115", "RUF046", "FURB162", "TRY004"]  # lazy openers; py3.10 fromisoformat; explicit int()

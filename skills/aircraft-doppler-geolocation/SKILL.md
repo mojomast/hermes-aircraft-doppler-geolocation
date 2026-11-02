@@ -5,12 +5,12 @@ description: >-
   curves matched against ADS-B flight tracks. Use when the user wants to find
   where or when a clip was recorded from background plane sound, or to audit
   their own recording for location leakage.
-version: "0.1.1"
+version: "0.2.0"
 author: mojomast
 license: MIT
 compatibility: >-
   Python 3.11+ with numpy, scipy, soundfile, matplotlib, and ffmpeg on PATH.
-  ADS-B history and a DEM are supplied by the user. The scripts make no network calls.
+  Since 0.2.0 the `doppler_locate` tool / `dopplergeo locate` CLI fetches ADS-B (adsb.lol, ODbL), types, Copernicus DEM and Open-Meteo temperature itself (cached, `--offline` for cache only). `doppler_detect` and the scripts make no network calls.
 metadata:
   hermes:
     tags: [OSINT, Geolocation, Audio, Doppler, ADS-B, Spectrogram, Forensics]
@@ -24,6 +24,12 @@ aircraft flyover Doppler curves in its spectrogram and matching them against rea
 flight tracks. Method follows the colsto video "I discovered a sound that leaks your exact
 location" (https://www.youtube.com/watch?v=UytYrhYLOKI). It is NOT mains-hum/ENF analysis,
 and it does not work without an audible-or-inaudible propeller/jet tonal in the recording.
+
+## Fast path (0.2.0)
+
+1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass: stop and say so.
+2. `doppler_locate(recording, date_hint, region_hint="lat,lon,radius_km")`: needs a date (or file metadata) and a region. Returns best point, 68/95 % areas, matched aircraft, `heatmap.png`. If metadata contains GPS it is reported directly.
+3. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.
 
 ## When to Use
 
