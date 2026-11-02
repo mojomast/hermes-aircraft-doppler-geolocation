@@ -5,7 +5,7 @@ description: >-
   curves matched against ADS-B flight tracks. Use when the user wants to find
   where or when a clip was recorded from background plane sound, or to audit
   their own recording for location leakage.
-version: "0.1.0"
+version: "0.1.1"
 author: mojomast
 license: MIT
 compatibility: >-
@@ -62,7 +62,7 @@ python scripts/make_synthetic_test.py   # self-test, no network, exit 0 = pass
 |---|---|
 | `ev1.csv` | time_s, freq_hz, power_db of the tracked ridge |
 | `ev1.png` | band spectrogram with ridge + fitted curve (inspect with `vision_analyze`) |
-| `ev1.json` | `f0_hz` (rest tone), `speed_mps`, `cpa_slant_m`, `cpa_receive_time_s`, stderr |
+| `ev1.json` | `f0_hz` (rest tone), `speed_mps`, `cpa_slant_m`, `cpa_receive_time_s`, stderr, `ridge_snr_z`, `detected`, `rejected_because` |
 | `ranked.csv` | candidates sorted by RMS Hz misfit (lower = better) |
 | `--plot scores.png` | heatmap of misfit, track, top ranks (`--true lat,lon` marks a known point) |
 
@@ -75,7 +75,8 @@ slant distance. c ≈ 331.3·√(1+T/273.15) m/s.
 1. Spectrogram: `doppler_track.py` decodes with ffmpeg to 4 kHz mono and tracks the ridge in
    a narrow band with fine (0.5 Hz) resolution. Zoom/boost; curves are often inaudible. Note
    every flyover's receive-CPA time, and also long stretches with NO flyover (silence is a constraint).
-2. Measure each event: read `f0`, speed and CPA slant distance from the JSON. Real planes turn
+2. Check `detected` first. If it is false, read `rejected_because`, then narrow the band to one harmonic or the window to one pass, or treat it as no flyover. Real tones score about 2.7 to 3.6 on `ridge_snr_z`; noise scores below 2.5 (`--min-snr`). For steep passes close by, raise `--max-slope`.
+   Measure each event: read `f0`, speed and CPA slant distance from the JSON. Real planes turn
    and change speed, so treat the fit as a generous range (e.g. ±20 m/s, ±30% distance).
 3. Candidate flights: from ADS-B for the date, drop known jet type codes (if the tone sounds
    like a prop), keep segments whose ground speed is within the event's speed range.
@@ -102,6 +103,7 @@ slant distance. c ≈ 331.3·√(1+T/273.15) m/s.
   left/right mirror ambiguity; turns, a second event, or a known time break these.
 - ADS-B altitude is barometric/MSL; use geometric altitude when available plus DEM.
 - 200 m grids can put the true point ~141 m off and score poorly — refine to 100 m.
+- Harmonics that cross each other make the ridge hop between tones. Use a band holding a single harmonic. A turning plane fails the straight-pass fit. Both are expected rejections.
 - Wind/temperature shift c and arrival times; MP3/AAC can hide but not remove low tones.
 
 ## Verification

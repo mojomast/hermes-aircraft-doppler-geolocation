@@ -37,7 +37,7 @@ class SkillFileTests(unittest.TestCase):
         if "_raw" not in fm:
             self.assertEqual(fm["name"], "aircraft-doppler-geolocation")
             self.assertIn("Use when", fm["description"])
-            self.assertEqual(str(fm["version"]), "0.1.0")
+            self.assertEqual(str(fm["version"]), "0.1.1")
         for h in [
             "## When to Use",
             "## Prerequisites",
@@ -52,8 +52,8 @@ class SkillFileTests(unittest.TestCase):
     def test_versions_agree(self):
         manifest = (ROOT / "plugin.yaml").read_text()
         pyproject = (ROOT / "pyproject.toml").read_text()
-        self.assertIn('version: "0.1.0"', manifest)
-        self.assertIn('version = "0.1.0"', pyproject)
+        self.assertIn('version: "0.1.1"', manifest)
+        self.assertIn('version = "0.1.1"', pyproject)
 
 
 class PhysicsTests(unittest.TestCase):
@@ -66,6 +66,36 @@ class PhysicsTests(unittest.TestCase):
         self.assertAlmostEqual(p[1], 70.0, delta=3)
         self.assertAlmostEqual(p[2], 800.0, delta=80)
         self.assertLess(rms, 0.5)
+
+
+class DetectionGateTests(unittest.TestCase):
+    def test_pure_noise_is_not_reported_as_a_flyover(self):
+        import json
+        import subprocess
+
+        import soundfile as sf
+
+        with tempfile.TemporaryDirectory() as d:
+            sf.write(
+                f"{d}/noise.wav",
+                np.random.default_rng(3).normal(0, 0.1, 4000 * 30),
+                4000,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "doppler_track.py"),
+                    f"{d}/noise.wav",
+                    "--out",
+                    f"{d}/n",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            with open(f"{d}/n.json") as fh:
+                res = json.load(fh)
+        self.assertFalse(res["detected"])
+        self.assertTrue(res["rejected_because"])
 
 
 class EndToEndTests(unittest.TestCase):

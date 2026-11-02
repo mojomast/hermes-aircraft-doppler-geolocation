@@ -60,7 +60,7 @@ def doppler_model(t, f0, v, d, tc, c=C):
     return np.interp(t, trecv, f)
 
 
-def track_ridge(x, sr, fmin, fmax, nperseg=None, hop_s=0.25):
+def track_ridge(x, sr, fmin, fmax, nperseg=None, hop_s=0.25, max_slope_hz_s=8.0):
     nperseg = nperseg or int(sr * 2)  # 0.5 Hz bins
     hop = max(1, int(sr * hop_s))
     f, t, S = signal.spectrogram(
@@ -76,7 +76,8 @@ def track_ridge(x, sr, fmin, fmax, nperseg=None, hop_s=0.25):
     # global Viterbi ridge: maximise sum(normalised power) - penalty*|jump| (bins/frame)
     Z = (Sb - np.median(Sb, axis=0)) / (np.std(Sb, axis=0) + 1e-9)
     nb, nt = Z.shape
-    maxjump = max(2, int(2.0 / (fb[1] - fb[0])))
+    # steepest allowed ridge slope; near-CPA passes at a few hundred metres exceed 2 Hz/s
+    maxjump = max(2, round(max_slope_hz_s * hop_s / (fb[1] - fb[0])))
     pen = 0.3
     acc = Z[:, 0].copy()
     back = np.zeros((nb, nt), dtype=int)
@@ -110,13 +111,45 @@ def track_ridge(x, sr, fmin, fmax, nperseg=None, hop_s=0.25):
     return t, np.array(fr), Sb[idx, np.arange(len(idx))], (f, t, S)
 
 
+def ridge_snr(F, S, fmin, fmax, pw):
+    """Median z-score of the ridge power against each frame's in-band distribution."""
+    band = (F >= fmin) & (F <= fmax)
+    Sb = 10 * np.log10(S[band] + 1e-20)
+    return float(np.median((pw - np.median(Sb, axis=0)) / (np.std(Sb, axis=0) + 1e-9)))
+
+
+def assess(res, min_snr=2.5):
+    """Gate a fit: the optimiser always returns *something*, even on pure noise."""
+    why = []
+    if res["ridge_snr_z"] < min_snr:
+        why.append(f"ridge SNR {res['ridge_snr_z']:.1f} < {min_snr} (no coherent tone)")
+    if res["rms_resid_hz"] > 0.02 * res["f0_hz"]:
+        why.append(
+            "residual > 2% of f0 (ridge jumped between tones or not a straight pass)"
+        )
+    if res["speed_mps"] < 20:
+        why.append("fitted speed < 20 m/s (flat ridge, no Doppler drop)")
+    if res["stderr"]["cpa_slant_m"] > 0.5 * res["cpa_slant_m"]:
+        why.append("CPA distance poorly constrained")
+    return not why, why
+
+
 def fit(t, fr, w=None):
     fhi, flo = np.percentile(fr, 95), np.percentile(fr, 5)
     f0g = np.sqrt(fhi * flo)
     vg = C * (fhi - flo) / (fhi + flo)
-    tcg = t[np.argmin(np.abs(fr - f0g))]
+    # CPA ~ steepest descent of the (smoothed) ridge; also try the f0 crossing and window quarters
+    sm = np.convolve(fr, np.ones(9) / 9, mode="same")
+    tcs = {
+        float(t[np.argmin(np.abs(fr - f0g))]),
+        float(t[4:-4][np.argmin(np.gradient(sm, t)[4:-4])])
+        if len(t) > 12
+        else float(t.mean()),
+        float(np.percentile(t, 33)),
+        float(np.percentile(t, 66)),
+    }
     best = None
-    for dg in (300, 800, 1500, 3000):
+    for dg, tcg in [(dg, tc) for dg in (300, 800, 1500, 3000) for tc in sorted(tcs)]:
         try:
             p, cov = optimize.curve_fit(
                 doppler_model,
@@ -146,6 +179,13 @@ def main():
     ap.add_argument("--t0", type=float)
     ap.add_argument("--t1", type=float)
     ap.add_argument("--sr", type=int, default=4000)
+    ap.add_argument("--max-slope", type=float, default=8.0, help="max ridge slope Hz/s")
+    ap.add_argument(
+        "--min-snr",
+        type=float,
+        default=2.5,
+        help="min median ridge SNR (z) to report a detection",
+    )
     ap.add_argument("--out")
     a = ap.parse_args()
     out = a.out or os.path.splitext(a.input)[0] + "_doppler"
@@ -155,8 +195,11 @@ def main():
         i0 = int((a.t0 or 0) * sr)
         i1 = int(a.t1 * sr) if a.t1 else len(x)
         x, off = x[i0:i1], (a.t0 or 0)
-    t, fr, pw, (F, T, S) = track_ridge(x, sr, a.fmin, a.fmax)
+    t, fr, pw, (F, T, S) = track_ridge(
+        x, sr, a.fmin, a.fmax, max_slope_hz_s=a.max_slope
+    )
     t = t + off
+    snr = ridge_snr(F, S, a.fmin, a.fmax, pw)
     np.savetxt(
         out + ".csv",
         np.c_[t, fr, pw],
@@ -183,6 +226,14 @@ def main():
             },
             "rms_resid_hz": rms,
             "speed_of_sound": C,
+            "ridge_snr_z": snr,
+        }
+        res["detected"], res["rejected_because"] = assess(res, a.min_snr)
+    else:
+        res = {
+            "detected": False,
+            "rejected_because": ["fit did not converge"],
+            "ridge_snr_z": snr,
         }
     with open(out + ".json", "w") as fh:
         json.dump(res, fh, indent=2)
