@@ -1,5 +1,6 @@
-import numpy as np
 from types import SimpleNamespace
+
+import numpy as np
 
 from dopplergeo import detect, score
 
@@ -18,6 +19,7 @@ def test_subharmonic_fit_gives_true_f0():
     # synthetic: lines at 1,2,3 x 80 Hz labelled as 2,4,6 of 40 Hz
     t = np.linspace(0, 40, 160)
     from dopplergeo.physics import straight_doppler
+
     D = straight_doppler(t, 1.0, 60.0, 300.0, 20.0, 343.0)
     lines = {2 * k: (t, k * 80.0 * D, np.full_like(t, 5.0)) for k in (1, 2, 3)}
     fit, *_ = detect._family_fit(detect._fix_subharmonic(lines), 343.0)
@@ -35,7 +37,10 @@ def test_cpa_consistency():
 
 
 def test_n_consistent_matches():
-    m = [{"chi2nu": 2.0, "cpa_ok": True}, {"chi2nu": 9.0, "cpa_ok": True},
-         {"chi2nu": 1.0, "cpa_ok": False}]
+    m = [
+        {"chi2nu": 2.0, "cpa_ok": True},
+        {"chi2nu": 9.0, "cpa_ok": True},
+        {"chi2nu": 1.0, "cpa_ok": False},
+    ]
     assert score.n_consistent_matches(m) == 1
     assert score.n_consistent_matches(m + [{"chi2nu": 3.0}]) == 2

@@ -139,6 +139,9 @@ def run_one(args):
         row["err_km"] = round(km(b["lat"], b["lon"], tla, tlo), 3)
         row["t0_off_s"] = round(b["t0_unix"] - T0, 1)
         row["n_matched"] = len(b["matches"] or [])
+        nc = score.n_consistent_matches(b["matches"] or [], opts=o)
+        row["n_consistent"] = nc
+        row["confidence"] = "ok" if nc >= 2 else "low"
         cov = coverage(res, tla, tlo, unc)
         row.update(cov)
         if heat:

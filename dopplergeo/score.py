@@ -49,7 +49,7 @@ class Options:
     # reference) adds to the detector noise and is correlated over seconds, so
     # the likelihood uses sigma = hypot(detector, model) and counts one
     # independent sample per corr_s seconds of event, not one per frame.
-    sigma_model: float = 0.004
+    sigma_model: float = 0.008
     corr_s: float = 4.0
     n_eff_max: float = 30.0  # no single long event may dominate the joint fit
     hop_over_win: float = 0.25  # cap: never more than this fraction of frames
@@ -61,7 +61,7 @@ class Options:
     # P(detector picks up a tonal pass at 0 m); decays linearly to 0 at r_silence_m.
     # Silence is scored as a Bernoulli miss, -log(1 - pd), so a recording with
     # commentary/music (low recall) is not pushed away from busy traffic.
-    detect_prob: float = 0.3
+    detect_prob: float = 0.15
     marginalize: bool = True  # sum, not max, over candidate aircraft per event
     span_tol: float = 0.05  # prefilter: |log Doppler span(pred/obs)| allowed
     # CPA-distance consistency: the event's own fitted CPA slant vs the pass's
