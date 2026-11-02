@@ -142,7 +142,9 @@ def find_passes(planes, gxyz, opts: Options, c: float):
         if not near:
             continue
         P = np.fromiter(near, int)
-        for chunk in np.array_split(P, max(1, len(P) // 2000 + 1)):
+        # bound the (points x samples x 3) temporary to ~100 MB
+        per = max(1, int(4e6 // max(len(pl.pos), 1)))
+        for chunk in np.array_split(P, max(1, -(-len(P) // per))):
             r = np.linalg.norm(pl.pos[None, :, :] - gxyz[chunk, None, :], axis=2)
             dr = np.diff(r, axis=1)
             is_min = np.zeros_like(r, bool)
@@ -282,9 +284,13 @@ def _pass_span(pl, g, k, half, c):
     pos = pl.pos[lo:hi]
     d = pos - g
     r = np.linalg.norm(d, axis=1)
-    vel = np.gradient(pos, pl.tau[lo:hi], axis=0)
-    vr = -np.sum(d * vel, axis=1) / np.maximum(r, 1.0)
-    D = c / (c - vr)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vel = np.gradient(pos, pl.tau[lo:hi], axis=0)
+        vr = -np.sum(d * vel, axis=1) / np.maximum(r, 1.0)
+        D = c / (c - vr)
+    D = D[np.isfinite(D) & (D > 0)]
+    if len(D) < 3:
+        return None
     return float(np.log(D.max() / D.min()))
 
 
@@ -300,6 +306,10 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
     for i in range(n):
         P = passes[i]
         if not P:
+            # no aircraft near this point: every event is a miss (finite, not -inf)
+            logl[i] = -sum(miss_cost(e, opts) for e in events)
+            if t0_window:
+                t0[i] = 0.5 * (t0_window[0] + t0_window[1])
             continue
         # per event, candidate (logl, T0, pass)
         per_ev = []
@@ -323,6 +333,15 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                     cand.append((ll, T0, pi, rm, sc, chi2))
             per_ev.append(cand)
         hyps = sorted({round(cnd[1], 1) for cand in per_ev for cnd in cand})
+        if not hyps:
+            # no event matched any pass: still score "all missed" (+ silence)
+            hyps = (
+                [round(0.5 * (t0_window[0] + t0_window[1]), 1)]
+                if t0_window
+                else sorted({round(tr - events[0].t_cpa, 1) for *_x, tr in P})
+                if events
+                else [0.0]
+            )
         best = (-np.inf, None, None)
         for T0h in hyps:
             if t0_window and not (
