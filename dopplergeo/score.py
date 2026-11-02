@@ -50,6 +50,7 @@ class Options:
     # independent sample per corr_s seconds of event, not one per frame.
     sigma_model: float = 0.004
     corr_s: float = 4.0
+    n_eff_max: float = 30.0  # no single long event may dominate the joint fit
     hop_over_win: float = 0.25  # cap: never more than this fraction of frames
     include_jets: bool = False
     scale_bounds: tuple = (0.7, 1.3)
@@ -235,13 +236,27 @@ def event_weight(ev, opts: Options) -> float:
     n = max(len(ev.times), 1)
     t = np.asarray(ev.times)
     span = float(t.max() - t.min()) if n > 1 else 0.0
-    n_eff = max(3.0, span / opts.corr_s)
+    n_eff = min(opts.n_eff_max, max(3.0, span / opts.corr_s))
     return min(opts.hop_over_win, n_eff / n)
 
 
 def miss_cost(ev, opts: Options) -> float:
-    """Log-likelihood cost of an event no pass explains (all samples outliers)."""
-    return opts.miss_penalty * 8.0 * event_weight(ev, opts) * len(ev.times)
+    """Log-likelihood cost of an event no pass explains.
+
+    The alternative to "this aircraft" is a no-Doppler null (constant tone at the
+    same sigma), not "every sample is an outlier": a noisy or nearly flat event
+    then carries little weight, because the null explains it almost as well as
+    any pass would. Capped at the all-outlier cost.
+    """
+    o = np.asarray(ev.ratio, float)
+    o = o[np.isfinite(o)]
+    if len(o) == 0:
+        return 0.0
+    sigma = event_sigma(ev, opts)
+    res = np.clip(o - np.median(o), -4 * sigma, 4 * sigma)
+    w = event_weight(ev, opts)
+    null = 0.5 * float((res**2).sum()) / sigma**2 * w
+    return opts.miss_penalty * min(null, 8.0 * w * len(ev.times))
 
 
 def silence_cost(rm, opts: Options) -> float:

@@ -252,7 +252,9 @@ class ScoringTests(unittest.TestCase):
         w = score.event_weight(ev, o)
         self.assertLessEqual(w, o.hop_over_win)
         span = ev.times[-1] - ev.times[0]
-        self.assertAlmostEqual(w * len(ev.times), max(3.0, span / o.corr_s), delta=1e-6)
+        self.assertAlmostEqual(
+            w * len(ev.times), min(o.n_eff_max, max(3.0, span / o.corr_s)), delta=1e-6
+        )
         self.assertGreater(score.event_sigma(ev, o), o.sigma_model - 1e-12)
 
     def test_rest_frequency_scale_at_bound_rejects_pass(self):
