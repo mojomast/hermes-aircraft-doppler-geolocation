@@ -431,3 +431,17 @@ class ToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DaysSpannedTests(unittest.TestCase):
+    def test_middle_day_is_included(self):
+        a = dt.datetime(2026, 10, 4, 23, 50, tzinfo=dt.UTC).timestamp()
+        b = dt.datetime(2026, 10, 6, 0, 10, tzinfo=dt.UTC).timestamp()
+        self.assertEqual(
+            locate.days_spanned(a, b),
+            [dt.date(2026, 10, 4), dt.date(2026, 10, 5), dt.date(2026, 10, 6)],
+        )
+
+    def test_single_day(self):
+        a = dt.datetime(2026, 10, 5, 0, 0, tzinfo=dt.UTC).timestamp()
+        self.assertEqual(locate.days_spanned(a, a + 86399), [dt.date(2026, 10, 5)])

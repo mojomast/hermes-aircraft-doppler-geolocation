@@ -42,6 +42,17 @@ def _parse_region(r):
     return float(r[0]), float(r[1]), float(r[2] if len(r) > 2 else 15)
 
 
+def days_spanned(t_a: float, t_b: float) -> list[dt.date]:
+    """Every UTC date touched by [t_a, t_b] (not just the two endpoints)."""
+    d = dt.datetime.fromtimestamp(t_a, dt.UTC).date()
+    end = dt.datetime.fromtimestamp(t_b, dt.UTC).date()
+    out = []
+    while d <= end:
+        out.append(d)
+        d += dt.timedelta(days=1)
+    return out
+
+
 def locate(
     recording,
     date_hint=None,
@@ -137,7 +148,9 @@ def locate(
     if when is not None:
         t0w = (when.timestamp() - time_tolerance_s, when.timestamp() + time_tolerance_s)
     else:
-        t0w = (day_start - clip_dur, day_start + 86400)
+        # date only: the recording is assumed to lie inside that UTC day, so one
+        # daily release is read (reading neighbours costs ~3 GB each)
+        t0w = (day_start, max(day_start, day_start + 86400 - clip_dur))
     margin_deg = (rad_km * 1000 + opts.r_max_m) / 111000.0
     bbox = (
         lat0 - margin_deg,
@@ -147,12 +160,7 @@ def locate(
     )
     if tracks is None:
         tracks = []
-        days = sorted(
-            {
-                dt.datetime.fromtimestamp(t, dt.UTC).date()
-                for t in (t0w[0], t0w[1] + clip_dur)
-            }
-        )
+        days = days_spanned(t0w[0], t0w[1] + clip_dur)
         for d in days:
             try:
                 tracks += adsb.fetch_tracks(
