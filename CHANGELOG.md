@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+Efficiency pass; the changes below only remove repeated work. On the 7 tune clips checked (see PR #5), events, every search level's log-likelihoods, start times, matches, best point, credible areas and coverage are bit-identical to 0.3.0 (max observed difference 0). An earlier revision of this branch differed on man_hg0903 (events up to ~3e-5 relative): that came from the vectorised broadband Viterbi accumulating float32 scores in float32, not from the detrend, and is fixed (float64 accumulation as in 0.3.0).
+
+- Event cache shared by `detect`, `locate` and the eval harness (`dopplergeo/evcache.py`): keyed by audio content hash, decode rate, detector settings and detector source hash; atomic writes, corrupt or mismatched entries are misses, LRU pruning. Changing region, date, tolerance or scorer options no longer repeats detection. `--no-cache` / `cache: false` to bypass. Reports carry `detection_cache.hit`.
+- `--no-plots` (CLI) / `plots: false` (tools) / `plots=False` (Python) skips `detection.png` and `heatmap.png`. Default unchanged (plots on).
+- `locate` validates region and date before decoding audio. A missing hint now returns its error without `events` in the report.
+- Scoring: event arrays prepared once per search and option-dependent values once per level; one shared pass-geometry slice per (point, pass) for the span prefilter and every event's prediction; plane velocities from one full-track gradient (slice ends patched to match `np.gradient`); `find_passes` evaluates only track samples near each chunk and builds slant ranges without a 3-D temporary; row-wise nanmedian without NumPy's masked-array path.
+- Detection: Viterbi jump search vectorised (tonal and broadband, same tie-breaking); masked score updated in place; frame-major backpointers. Broadband polynomial detrend uses the (nf × 5) factors instead of a dense nf × nf projection (isolated 256 × 876 benchmark: ~3.6× faster than the precomputed dense projection, max diff 2.4e-15). The vectorised broadband Viterbi accumulates in float64 as 0.3.0 did.
+- DEM: parsed tiles and decoded blocks reused across `elevation()` calls (bounded LRU, 4 tiles × 16 blocks). ADS-B: cached crops stream-filtered line by line; crop headers memoised.
+- Event-cache entries are validated in full (payload and every event); malformed entries are recomputed.
+- Eval harness: events from the event cache (old per-run pickles were keyed on the audio path); `run_key` per row, checked on `--resume`; `--jobs 0` (new default) sizes workers from available memory (`--mem-per-job-gb`, default 2); spawned workers get `OMP/OPENBLAS/MKL_NUM_THREADS = cpu // jobs`.
+- `scripts/profile_clip.py`: stage timings, peak RSS and a result pickle for before/after comparisons.
+
 ## 0.3.0 — 2026-11-03
 
 - Broadband (jet) pass detection from the ground-reflection (Lloyd's mirror) multipath delay: band-limited cepstrogram, Viterbi quefrency track, straight-pass fit τ(t) = τ_max/√(1+((t−t_c)/T)²), and gates (`dopplergeo/broadband.py`). Opt-in with `detect_events(..., broadband=True)` or `eval_batch.py --det broadband=true`; enabled from the CLI with `--broadband` (detect and locate) and from the tools with `broadband: true`.

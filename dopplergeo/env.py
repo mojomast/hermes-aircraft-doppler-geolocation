@@ -21,6 +21,7 @@ import json
 import math
 import urllib.error
 import zlib
+from collections import OrderedDict
 
 import numpy as np
 
@@ -53,10 +54,12 @@ class _Tile:
         self.lon0, self.lat0, self.dx, self.dy = tie[3], tie[4], sc[0], sc[1]
         self.predictor = p.tags["Predictor"].value if "Predictor" in p.tags else 1
         tf.close()
-        self._cache = {}
+        self._cache = OrderedDict()  # bounded LRU of decompressed blocks
 
     def _tile(self, i):
-        if i not in self._cache:
+        if i in self._cache:
+            self._cache.move_to_end(i)
+        else:
             with open(self.path, "rb") as fh:
                 fh.seek(self.offsets[i])
                 raw = zlib.decompress(fh.read(self.counts[i]))
@@ -71,6 +74,8 @@ class _Tile:
             else:
                 a = np.frombuffer(raw, "<f4").reshape(self.tl, self.tw)
             self._cache[i] = a.astype(np.float32)
+            while len(self._cache) > MAX_DEM_BLOCKS:
+                self._cache.popitem(last=False)
         return self._cache[i]
 
     def sample(self, lat, lon):
@@ -85,12 +90,33 @@ class _Tile:
         return out
 
 
+# decompressed DEM reuse across elevation() calls (one per search level): up to
+# MAX_DEM_FILES parsed tiles, each holding at most MAX_DEM_BLOCKS decoded blocks
+# (GLO-30 blocks are 1024 x 1024 float32 = 4 MB)
+MAX_DEM_FILES = 4
+MAX_DEM_BLOCKS = 16
+_open_tiles: OrderedDict = OrderedDict()
+
+
+def _open_tile(path):
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    t = _open_tiles.get(key)
+    if t is None:
+        t = _open_tiles[key] = _Tile(path)
+        while len(_open_tiles) > MAX_DEM_FILES:
+            _open_tiles.popitem(last=False)
+    else:
+        _open_tiles.move_to_end(key)
+    return t
+
+
 def _get_tile(lat_i, lon_i, offline):
     name = _tile_name(lat_i, lon_i)
     path = cache_dir("dem") / f"{name}.tif"
     missing = cache_dir("dem") / f"{name}.none"
     if path.exists():
-        return _Tile(path)
+        return _open_tile(path)
     if missing.exists():
         return None
     if offline:
@@ -104,7 +130,7 @@ def _get_tile(lat_i, lon_i, offline):
             return None
         raise
     atomic_write_bytes(path, data)
-    return _Tile(path)
+    return _open_tile(path)
 
 
 def elevation(lat, lon, offline=False, flat_m=0.0) -> tuple[np.ndarray, str]:
