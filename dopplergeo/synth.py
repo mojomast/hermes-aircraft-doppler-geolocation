@@ -85,3 +85,52 @@ def as_adsb(hex_, t, lat, lon, alt, cls="piston", typ="C172", every=2.0):
         "alt_m": list(alt[idx]),
         "gs_mps": [None] * len(idx),
     }
+
+
+def render_broadband(
+    rec_start,
+    dur,
+    sr,
+    observer,
+    tracks,
+    mic_h=1.5,
+    refl=0.9,
+    c=C_DEFAULT,
+    noise=0.05,
+    seed=0,
+    gain=300.0,
+    band=(80.0, 1800.0),
+):
+    """Jet-like broadband flyover heard by a mic mic_h above flat reflecting ground.
+
+    Each plane emits band-limited noise; the mic hears the direct path and the
+    ground-reflected path (image receiver at -mic_h), each emission-time correct,
+    so the recording carries both Doppler and the Lloyd's-mirror fringes.
+    observer = (lat, lon, ground_h).
+    """
+    from scipy.signal import butter, sosfilt
+
+    rng = np.random.default_rng(seed)
+    rt = rec_start + np.arange(0, dur, 1.0 / sr)
+    x = rng.normal(0, noise, rt.size)
+    sos = butter(4, [band[0], band[1]], "bp", fs=sr, output="sos")
+    lat0, lon0, h0 = observer
+    for tt, la, lo, al in tracks:
+        tau = np.arange(tt[0], tt[-1], 1.0 / sr)
+        src = sosfilt(sos, rng.normal(0, 1, tau.size))
+        for hm, a in ((mic_h, 1.0), (-mic_h, refl)):
+            P = enu(
+                np.interp(tau, tt, la),
+                np.interp(tau, tt, lo),
+                np.interp(tau, tt, al),
+                lat0,
+                lon0,
+                h0 + hm,
+            )
+            r = np.linalg.norm(P, axis=1)
+            trec = tau + r / c
+            ok = (rt >= trec[0]) & (rt <= trec[-1])
+            te = np.interp(rt[ok], trec, tau)
+            amp = gain / np.interp(rt[ok], trec, r)
+            x[ok] += a * amp * np.interp(te, tau, src)
+    return x / (np.abs(x).max() * 1.05)

@@ -72,6 +72,9 @@ class Event:
         repr=False, default_factory=list
     )  # observed f / f0 (Doppler ratio)
     sigma_ratio: float = 0.0
+    kind: str = "tonal"  # "tonal" (Doppler ratio) or "broadband" (multipath delay)
+    tau_max_s: float = 0.0  # broadband: peak ground-reflection delay
+    T_s: float = 0.0  # broadband: CPA slant range / speed
 
     def to_dict(self, series: bool = False) -> dict:
         d = asdict(self)
@@ -436,8 +439,14 @@ def detect_events(
     p_max=1e-4,
     max_events=8,
     c=C_DEFAULT,
+    broadband=False,
 ):
-    """Find flyover tone events in a mono signal. Returns (events, diagnostics)."""
+    """Find flyover tone events in a mono signal. Returns (events, diagnostics).
+
+    broadband=True also adds ground-reflection (multipath-delay) events for passes
+    without tonal lines (see broadband.py); tonal events take precedence when both
+    cover the same pass.
+    """
     hop_s, win_s = 0.25, 1.0
     f, t, Z, L = whitened_spectrogram(x, sr, win_s, hop_s, fmax)
     f0_grid = np.arange(f0_min, f0_max, 0.5)
@@ -512,6 +521,13 @@ def detect_events(
         "spectrogram": (f, t, L),
         "harmonic_sum": (f0_grid, HS),
     }
+    if broadband:
+        from .broadband import detect_broadband
+
+        bev, bdiag = detect_broadband(x, sr)
+        bev = [b for b in bev if not any(abs(b.t_cpa - e.t_cpa) < 15.0 for e in events)]
+        events = sorted(events + bev, key=lambda e: e.t_cpa)
+        diag["broadband"] = bdiag
     return events, diag
 
 
