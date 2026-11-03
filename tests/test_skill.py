@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import doppler_track
 import make_synthetic_test
+import score_candidates
 
 
 def frontmatter(text):
@@ -96,6 +97,34 @@ class DetectionGateTests(unittest.TestCase):
                 res = json.load(fh)
         self.assertFalse(res["detected"])
         self.assertTrue(res["rejected_because"])
+
+
+class TrackSmoothingTests(unittest.TestCase):
+    def test_smoothing_removes_doppler_noise_from_jittery_adsb(self):
+        # straight 70 m/s pass at 900 m; 1 Hz fixes with ~25 m position jitter
+        t = np.arange(0, 200, 1.0)
+        lat = 40.0 + np.zeros_like(t)
+        lon = -75.0 + np.degrees(
+            (70 * (t - 100)) / (score_candidates.R_E * np.cos(np.radians(40)))
+        )
+        clean = np.c_[t, lat, lon, np.full_like(t, 900.0)]
+        noisy = clean.copy()
+        noisy[:, 2] += np.degrees(
+            np.random.default_rng(0).normal(0, 25, t.size)
+            / (score_candidates.R_E * np.cos(np.radians(40)))
+        )
+        cand = (40.0 + np.degrees(600 / score_candidates.R_E), -75.0, 0.0)
+        tc, fc, _, _ = score_candidates.received_curve(clean, cand, 120.0)
+
+        def err(smooth_s):
+            tn, fn, _, _ = score_candidates.received_curve(
+                noisy, cand, 120.0, smooth_s=smooth_s
+            )
+            m = (tn > 60) & (tn < 140)
+            return np.sqrt(np.mean((fn[m] - np.interp(tn[m], tc, fc)) ** 2))
+
+        self.assertGreater(err(0), 2.0)
+        self.assertLess(err(10), err(0) / 3)
 
 
 class EndToEndTests(unittest.TestCase):
