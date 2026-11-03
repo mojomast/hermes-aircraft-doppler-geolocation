@@ -95,7 +95,7 @@ def track_segments(Z, max_jump=20, z_thr=4.0, birth=8.0, min_frames=16):
     oob = (src < 0) | (src >= nq)
     src = np.clip(src, 0, nq - 1)
     for t in range(1, nt):
-        cand = v_on[src]
+        cand = v_on[src].astype(np.float64, copy=False)  # v0.3.0 accumulates in float64
         cand[oob] = -np.inf
         c = np.argmax(cand, axis=1)
         best = cand[rows, c]

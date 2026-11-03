@@ -166,3 +166,53 @@ def test_broadband_track_identical():
             for x, y in zip(a, b):
                 np.testing.assert_array_equal(x[0], y[0])
                 np.testing.assert_array_equal(x[1], y[1])
+
+
+def _same_tracks(a, b):
+    assert len(a) == len(b)
+    for x, y in zip(a, b):
+        np.testing.assert_array_equal(x[0], y[0])
+        np.testing.assert_array_equal(x[1], y[1])
+
+
+def test_broadband_float32_scores_accumulate_in_float64():
+    # review repro: a 1e-5 lead at frame 0 survives only in float64 accumulation
+    Z = np.zeros((2000, 80), dtype=np.float32)
+    Z[:, 5] = 4.1
+    Z[:, 70] = 4.1
+    Z[0, 70] = 4.10001
+    a = ref_track_segments(Z, max_jump=30)
+    b = broadband.track_segments(Z, max_jump=30)
+    assert a and int(a[0][1][0]) == 70
+    _same_tracks(a, b)
+
+
+def test_broadband_float32_randomised_long_inputs():
+    rng = np.random.default_rng(7)
+    for trial in range(6):
+        nt, nq = (3000, 200) if trial < 3 else (600, 1170)
+        Z = rng.normal(0, 1, (nt, nq)).astype(np.float32)
+        for _ in range(3):
+            q0 = int(rng.integers(40, nq - 40))
+            t0 = int(rng.integers(0, nt - 300))
+            for i in range(t0, t0 + 250):
+                Z[i, q0 + int(20 * np.sin(i / 40))] = np.float32(4.0 + rng.random())
+        if trial % 2:
+            Z = (np.round(Z * 4) / 4).astype(np.float32)  # many exact ties
+        _same_tracks(
+            ref_track_segments(Z, max_jump=30), broadband.track_segments(Z, max_jump=30)
+        )
+
+
+def test_tonal_viterbi_float32_input_matches():
+    rng = np.random.default_rng(9)
+    s = np.clip(rng.normal(-0.2, 1, (400, 1500)), -0.35, 6).astype(np.float32)
+    s[100, :] = 4.0
+    s[300, :] = 4.0
+    s[300, 0] = np.float32(4.00001)
+    a = ref_viterbi_segments(s, 5)
+    b = detect.viterbi_segments(s, 5)
+    assert len(a) == len(b) and a
+    for x, y in zip(a, b):
+        assert x[:2] == y[:2]
+        np.testing.assert_array_equal(x[2], y[2])
