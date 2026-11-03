@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 — unreleased (feat/broadband)
+
+- Broadband (jet) pass detection from the ground-reflection (Lloyd's mirror) multipath delay: band-limited cepstrogram, Viterbi quefrency track, straight-pass fit τ(t) = τ_max/√(1+((t−t_c)/T)²), and gates (`dopplergeo/broadband.py`). Opt-in with `detect_events(..., broadband=True)` or `eval_batch.py --det broadband=true`; not yet a CLI or tool option.
+- `Event.kind` (`tonal` / `broadband`), `tau_max_s`, `T_s`. A broadband event within 15 s of a tonal event is dropped.
+- Scorer: broadband events match predicted sin(elevation) with the unknown mic height as a scale (`bb_scale_bounds=(1, 60)`, `bb_sigma_model=0.06`). ADS-B jets are scored for broadband events only; tonal scoring is unchanged.
+- `synth.render_broadband` (direct + image-receiver path) and `tests/test_broadband.py`.
+- Gate change made on tune data: T lower bound 0.8 s and minimum span 4 s (very low passes).
+- Docs: README restructured (CLI flags, tool parameters with example output, how to read 95 % regions, data and eval licences, harness), new `docs/broadband.md` and `docs/evaluation.md`. Tune results: man_hg0903 10.5 → 0.19 km, man_hg0909 none → 0.33 km. Held-out results pending.
+
 ## 0.2.0 — unreleased
 
 - New `dopplergeo` package, CLI (`dopplergeo detect|locate`), and Hermes tools `doppler_detect` / `doppler_locate`.

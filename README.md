@@ -6,51 +6,9 @@ It is a community plugin by [Kyle Durepos](https://github.com/mojomast). It is n
 
 ![Catalog banner](docs/catalog-banner.png)
 
-## New in 0.2.0: automatic pipeline
+**Status:** 0.3.0 in development (branch `feat/broadband`, draft PR #4, on top of the unreleased 0.2.0 in draft PR #2). Nothing here is tagged or released, and the Hermes catalog still pins 0.1.1. The method locates clean multi-pass recordings to within about 1 km but mostly fails on unseen clips. Read [Real-world results](#real-world-results) before you trust any output.
 
-```bash
-dopplergeo detect clip.wav --out ev/                          # find flyovers automatically
-dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --out run/
-dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --offline   # cache only
-```
-
-Python: `dopplergeo.locate.locate(recording, date_hint=None, region_hint=None, offline=False, out_dir=None, time_tolerance_s=600, include_jets=False)`; Hermes tools: `doppler_detect`, `doppler_locate`. `dopplergeo` is installed as a console script by `pip install -e .`; from a checkout without installing, use `python3 -m dopplergeo`.
-
-- **Detection** (no hand-picked bands): whitened 1 s spectrogram, harmonic sum (k ≤ 6), CFAR, Viterbi multi-ridge tracking with an off state, a joint harmonic-family fit, segment linking across dropouts, and an acceptance test (F-test against a constant tone, frequency drop, plausible speed, closest approach inside the tone, non-degenerate distance).
-- **Data**: ADS-B from adsb.lol daily `globe_history` releases, streamed and cropped to your region and time window; only the crop is cached (`~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`). Aircraft types from tar1090-db (jets dropped by default, since they rarely give a tonal line). Copernicus GLO-30 elevation (flat-terrain fallback). Open-Meteo temperature sets the speed of sound.
-- **Scoring**: predicts each event's curve from the real track (turns included), with emission-time correction, a robust f0-scale fit, joint likelihood across events, and a penalty for close passes that were not heard. Coarse-to-fine grid (1000/200/50 m) gives a posterior heatmap with 68 %/95 % regions. Unknown recording time: file metadata (ffprobe creation_time, GPS tags, yt-dlp `.info.json`) or sliding offsets.
-
-![Synthetic heatmap](docs/screenshots/v02-heatmap-synthetic.png)
-![Automatic detection, real Cessna 421 clip](docs/screenshots/v02-auto-detect-cessna421.png)
-
-**Real-clip detection (0.2.0, automatic):** Cessna 421 clip: 1 event (49 m/s, 159 m CPA). "Planes overhead / birds" clip: 2 events (57 m/s at 1.4 km; 67 m/s at 1.1 km). Amsterdam city ambience, a 23 s jet clip, and the Conquest tower flyby: 0 events (expected: no clean tonal pass). The full pipeline is exact on synthetic data (0 m grid error, start time within 0.3 s). On real recordings with a known place and time it locates clean multi-pass clips to about 1 km but mostly fails on unseen clips; see [Real-world geolocation results](#real-world-geolocation-results-v020).
-
-### Data credits
-
-- ADS-B: [adsb.lol](https://adsb.lol), Open Database License (ODbL 1.0). Derived crops stay under ODbL.
-- Aircraft types: [wiedehopf/tar1090-db](https://github.com/wiedehopf/tar1090-db).
-- Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA.
-- Weather: [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
-- Evaluation recordings (not shipped in the repo): Freesound clips under CC0 by Sadiquecat, joeffl, sounds_from_palestine and nicotep; radio aporee ::: maps recordings in the public domain by Jan Krtička, Boris Allenou, nicozentz, Flavien Gillié, David Pitt and sjdowgray; public YouTube videos, credited where shown below. Clip IDs, links and licences are recorded in the eval manifest (kept outside the repo, since the audio is not redistributed here).
-
-## What you get
-
-One skill, `aircraft-doppler-geolocation:aircraft-doppler-geolocation`, and three scripts in `skills/aircraft-doppler-geolocation/scripts/`:
-
-| Script | Job |
-| --- | --- |
-| `doppler_track.py` | Decode audio/video with ffmpeg, trace the flyover tone on a narrow-band spectrogram (Viterbi ridge), and fit base tone, speed, closest-approach slant distance, and closest-approach time. Writes CSV, PNG, JSON with a `detected` flag, `ridge_snr_z`, and `rejected_because`. Options `--min-snr` and `--max-slope`. |
-| `score_candidates.py` | For a real flight track (ADS-B CSV) and candidate points (lat, lon, ground elevation), model the exact curve each point would hear using the velocity at emission time, and rank points by misfit in Hz. `--plot` writes a heatmap. |
-| `make_synthetic_test.py` | Offline self-test: synthetic curved flyover buried in noise, fit, then locate the observer on a grid. |
-
-## Disclosure
-
-- `register()` calls `ctx.register_skill` and `ctx.register_tool` for `doppler_detect` and `doppler_locate`. No hooks or middleware.
-- `doppler_track.py` runs `ffmpeg` (no shell) on the path you pass. Scripts read only the paths you pass and write the outputs you name.
-- **Network (0.2.0, `locate` only, skipped with `--offline`)**: HTTPS GET to api.github.com / github.com (adsb.lol release assets, streamed; up to ~3 GB read per day, only the crop is stored), raw.githubusercontent.com (type table), copernicus-dem-30m.s3.amazonaws.com (DEM tiles), archive-api.open-meteo.com (temperature). No credentials, uploads, telemetry, or self-updater. `detect` and the scripts make no network calls.
-- Enabling the plugin asks Hermes to install numpy, scipy, soundfile, matplotlib, and tifffile (pinned ranges in `pyproject.toml`). Install `ffmpeg` yourself.
-
-Details are in [SECURITY.md](SECURITY.md).
+Contents: [Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Hermes tools](#hermes-tools) · [How it works](#how-it-works) · [Data sources and licences](#data-sources-and-licences) · [Evaluation](#evaluation-harness) · [Real-world results](#real-world-results) · [Limitations](#limitations) · [Privacy and ethics](#privacy-and-ethics)
 
 ## Install
 
@@ -63,14 +21,141 @@ hermes plugins enable aircraft-doppler-geolocation
 
 After catalog acceptance, the reviewed install is `hermes plugins install aircraft-doppler-geolocation`.
 
-## Use it from a shell
+For the CLI and the library on their own (Python 3.11+, `ffmpeg` on PATH for video and compressed audio):
+
+```bash
+git clone https://github.com/mojomast/hermes-aircraft-doppler-geolocation && cd hermes-aircraft-doppler-geolocation
+pip install -e .          # installs the `dopplergeo` console script
+```
+
+From a checkout without installing, use `python3 -m dopplergeo` in place of `dopplergeo`.
+
+## Quick start
+
+```bash
+dopplergeo detect clip.wav --out ev/                                         # find flyovers (offline)
+dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --out run/ # download ADS-B for the day and search
+dopplergeo locate clip.wav --date 2026-09-21T14:13:20Z --time-tolerance 30 --region 43.8,-79.3,8 --offline --out run/
+```
+
+`detect` writes `detect.json` and `detection.png`. `locate` writes `report.json` and `heatmap.png` and prints the report. The exit code is 2 when `ok` is false (for example: no events, or `--offline` with nothing cached for that day and region).
+
+Offline self-test, no network, no input files:
+
+```bash
+python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # prints SELF-TEST PASSED
+```
+
+## CLI
+
+`python3 -m dopplergeo detect RECORDING [--out DIR]`
+
+| Flag | Meaning |
+| --- | --- |
+| `RECORDING` | Any audio or video file ffmpeg can decode (resampled to 4 kHz mono). |
+| `--out DIR` | Output directory. Default: `<recording>.doppler/`. |
+
+`python3 -m dopplergeo locate RECORDING [--date D] [--region R] [--offline] [--time-tolerance S] [--include-jets] [--out DIR]`
+
+| Flag | Meaning |
+| --- | --- |
+| `--date` | `YYYY-MM-DD`: the whole UTC day is searched for the start time (slow, ambiguous). An ISO datetime (`2026-09-21T14:13:20Z`, UTC unless an offset is given) is the recording start, searched ± `--time-tolerance`. If omitted, file metadata is used: ffprobe `creation_time`, or the upload date from a yt-dlp `.info.json`. |
+| `--region` | `lat,lon,radius_km`, radius at most 60 km. Required unless the file carries GPS tags. If it does, those coordinates are reported directly (`method: metadata-gps`). |
+| `--offline` | Use only the cache (ADS-B crops, DEM, weather). No network. |
+| `--time-tolerance` | Seconds of slack around an ISO datetime. Default 600. The evaluation uses 30. |
+| `--include-jets` | Also score known jet types against tonal events. Default off: jets rarely give tonal lines and add false matches. |
+| `--out` | Output directory. Default: `<recording>.doppler/`. |
+
+**Broadband events and scorer options are not CLI flags yet.** In 0.3.0-dev, broadband (ground-reflection) detection is opt-in from Python, `detect.detect_events(x, sr, broadband=True)`, or from the eval harness, `--det broadband=true`. Scorer settings such as `temper_extra` (default 4) are `dopplergeo.score.Options` fields, set in the harness with `--set temper_extra=4`. The CLI and the Hermes tools use the defaults and detect tonal events only.
+
+**Cache.** Downloads are cached in `~/.cache/doppler-geo`, or in `$DOPPLER_GEO_CACHE` if set: ADS-B crops per day and region, DEM tiles, weather and the type table. Writes are atomic, so parallel runs can share one cache. Only the crop of each adsb.lol day is stored, not the ~3 GB release.
+
+## Hermes tools
+
+The plugin registers one skill, `aircraft-doppler-geolocation:aircraft-doppler-geolocation`, and two tools in the `aircraft-doppler-geolocation` toolset. Both return one JSON document; on errors they return `{"ok": false, "error": "..."}` and do not raise.
+
+| Tool | Parameters | Network |
+| --- | --- | --- |
+| `doppler_detect` | `recording` (required), `out_dir` | none |
+| `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
+
+`doppler_detect` returns `events` (per event: `kind` (`tonal`, or `broadband` in 0.3.0-dev when enabled from Python), `t_cpa`, `f0_hz`, `speed_mps`, `cpa_slant_m`, `harmonics`, `snr_z`, `f_test`, `p_value`, plus `tau_max_s` and `T_s` for broadband events), `rejected_segments` with reasons, and `files.detection_png`.
+
+`doppler_locate` example output. This is a real run on the synthetic two-pass scenario from `tests/test_v02.py` (two Cessnas, injected tracks), trimmed:
+
+```json
+{
+  "ok": true,
+  "method": "doppler-adsb",
+  "best": {
+    "lat": 43.80630, "lon": -79.30498, "logl": -6.84,
+    "t0_unix": 1789999999.7,
+    "recording_start_utc": "2026-09-21T14:13:19.700000+00:00",
+    "n_consistent_events": 2,
+    "confidence": "ok",
+    "matches": [{"event": 0, "aircraft": "C172 BBB002", "class": "piston",
+                 "cpa_slant_m": 1166.3, "event_cpa_slant_m": 1154.8,
+                 "f0_scale": 1.0018, "chi2nu": 0.13, "cpa_ok": true}]
+  },
+  "top": [{"lat": 43.80630, "lon": -79.30498, "logl": -6.84}, "..."],
+  "credible_area_km2": {"68": 0.36, "95": 0.72, "grid_step_m": 200.0},
+  "files": {"heatmap_png": "run/heatmap.png", "report_json": "run/report.json"}
+}
+```
+
+**How to read it.** Check `best.confidence` first. `ok` means at least 2 events matched an aircraft consistently, both in Doppler shape and CPA distance (`n_consistent_events`). With `low`, the report adds a `warning` and `credible_area_km2["95_low_conf"]`, which is the whole search disc: the answer is "somewhere in the region", not the point. Even with `ok`, the 95 % area is only roughly calibrated (`temper_extra=4`, set on 12 tune runs), and one held-out `ok` result was 13 km off. Treat every result as a hypothesis to confirm visually.
+
+![Synthetic heatmap](docs/screenshots/v02-heatmap-synthetic.png)
+![Automatic detection, real Cessna 421 clip](docs/screenshots/v02-auto-detect-cessna421.png)
+
+## How it works
+
+**Tonal Doppler (0.2.0).** A propeller or engine line at rest frequency f0 is heard at f = f0·c/(c − v_r(τ)), where v_r is the radial velocity at emission time τ and the sound arrives at t = τ + r(τ)/c. The size of the drop gives speed, its steepness gives the CPA slant distance. Detection uses a whitened 1 s spectrogram, a harmonic sum (k ≤ 6), CFAR, Viterbi multi-ridge tracking with an off state, a joint harmonic-family fit, segment linking across dropouts, and an acceptance test (F-test against a constant tone, frequency drop, plausible speed, CPA inside the tone, non-degenerate distance). No hand-picked bands. Ferguson (1992, JASA 92(3)) and Ferguson & Lo (2000, JASA 108(4)) describe the same narrow-band model.
+
+**Broadband multipath delay (0.3.0-dev, opt-in).** Jets often give no tonal line, but a microphone at height h above ground hears the direct sound plus a ground-reflected copy delayed by τ(t) ≈ 2·h·sin(elevation)/c (Lloyd's mirror). The log spectrum then has fringes spaced 1/τ, and the band-limited power cepstrum peaks at quefrency τ. For a straight level pass, τ(t) = τ_max/√(1+((t−t_c)/T)²) with T = S0/v (CPA slant range over speed). The detector tracks the cepstral peak with Viterbi, fits the curve and gates it. The scorer matches the normalised curve against each ADS-B candidate's predicted sin(elevation), with the unknown microphone height fitted as a scale. Details, maths and gates: [docs/broadband.md](docs/broadband.md). The method follows:
+- Lo & Ferguson, *Aircraft flight parameter estimation using acoustic multipath delays*, IEEE TAES 39(1), 2003, doi:10.1109/TAES.2003.1188908.
+- Ferguson & Lo / Quinn, *Flight parameter identification from cepstrum tracks*, IDC 2002, doi:10.1109/IDC.2002.995436.
+- Lo, Perry & Ferguson, *Aircraft flight parameter estimation using acoustical Lloyd's mirror effect*, IEEE TAES 38(1), 2002, doi:10.1109/7.993235.
+- Streit & Barrett, frequency-line tracking with HMMs, IEEE TASSP 38(4), 1990 (Viterbi tracking).
+
+**Scoring.** For every grid point, the scorer predicts each event's curve from the real ADS-B track (turns included, emission time solved, DEM ground height, Open-Meteo temperature for c). It fits a robust f0 scale (tonal) or height scale (broadband), takes the joint likelihood across events, penalises close passes that should have been heard but were not, and adds a CPA-distance consistency term. A coarse-to-fine grid (1000 / 200 / 50 m) gives the posterior heatmap and 68 % / 95 % areas. The posterior is tempered by the Birge ratio times `temper_extra` (4). An unknown start time is searched with sliding offsets.
+
+## Data sources and licences
+
+- ADS-B: [adsb.lol](https://adsb.lol), Open Database License (ODbL 1.0). Derived crops stay under ODbL.
+- Aircraft types: [wiedehopf/tar1090-db](https://github.com/wiedehopf/tar1090-db).
+- Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA.
+- Weather: [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
+- Evaluation recordings (not shipped in the repo): Freesound clips under CC0 by Sadiquecat, joeffl, sounds_from_palestine and nicotep; radio aporee ::: maps recordings in the public domain by Jan Krtička, Boris Allenou, nicozentz, Flavien Gillié, David Pitt and sjdowgray; public YouTube videos, credited where shown below. Clip IDs, links and licences are recorded in the eval manifest (kept outside the repo, since the audio is not redistributed here).
+- Eval recordings (not shipped; only their results and screenshots are): Freesound recordings under CC0 by Sadiquecat, joeffl, sounds_from_palestine and nicotep; radio aporee ::: maps recordings in the public domain by Jan Krtička, Boris Allenou, nicozentz, Flavien Gillié, David Pitt and sjdowgray; public YouTube livestream VODs and videos, credited where shown. The full list with links is in [docs/evaluation.md](docs/evaluation.md#recordings-and-attribution). CC BY recordings that were screened (klankbeeld, curious_world_on_youtube) were excluded before evaluation.
+
+## What you get
+
+- `dopplergeo/`: the package (CLI, tools, detection, broadband, ADS-B / DEM / weather fetchers, scorer, synthetic generator).
+- `scripts/eval_batch.py`: the real-world evaluation harness.
+- Three standalone, offline skill scripts in `skills/aircraft-doppler-geolocation/scripts/` (the 0.1.x manual workflow):
+
+| Script | Job |
+| --- | --- |
+| `doppler_track.py` | Decode audio/video with ffmpeg, trace the flyover tone on a narrow-band spectrogram (Viterbi ridge) in a band you pick, and fit base tone, speed, closest-approach slant distance, and closest-approach time. Writes CSV, PNG, JSON with a `detected` flag, `ridge_snr_z`, and `rejected_because`. Options `--min-snr` and `--max-slope`. |
+| `score_candidates.py` | For a real flight track (ADS-B CSV) and candidate points (lat, lon, ground elevation), model the exact curve each point would hear using the velocity at emission time, and rank points by misfit in Hz. `--plot` writes a heatmap. |
+| `make_synthetic_test.py` | Offline self-test: synthetic curved flyover buried in noise, fit, then locate the observer on a grid. |
 
 ```bash
 S=skills/aircraft-doppler-geolocation/scripts
-python $S/doppler_track.py clip.mp4 --fmin 60 --fmax 250 --out ev1
-python $S/score_candidates.py track.csv candidates.csv ev1.csv --f0 110 --rec-start 1725827820 --dt-tol 2 --plot scores.png
-python $S/make_synthetic_test.py
+python3 $S/doppler_track.py clip.mp4 --fmin 60 --fmax 250 --out ev1
+python3 $S/score_candidates.py track.csv candidates.csv ev1.csv --f0 110 --rec-start 1725827820 --dt-tol 2 --plot scores.png
+python3 $S/make_synthetic_test.py
 ```
+
+## Disclosure
+
+- `register()` calls `ctx.register_skill` and `ctx.register_tool` for `doppler_detect` and `doppler_locate`. No hooks or middleware.
+- `doppler_track.py` runs `ffmpeg` (no shell) on the path you pass. Scripts read only the paths you pass and write the outputs you name.
+- **Network (`locate` only, skipped with `--offline`)**: HTTPS GET to api.github.com / github.com (adsb.lol release assets, streamed; up to ~3 GB read per day, only the crop is stored), raw.githubusercontent.com (type table), copernicus-dem-30m.s3.amazonaws.com (DEM tiles), archive-api.open-meteo.com (temperature). No credentials, uploads, telemetry, or self-updater. `detect` and the scripts make no network calls.
+- Enabling the plugin asks Hermes to install numpy, scipy, soundfile, matplotlib, and tifffile (pinned ranges in `pyproject.toml`). Install `ffmpeg` yourself.
+
+Details are in [SECURITY.md](SECURITY.md).
 
 ## Self-test result
 
@@ -90,7 +175,31 @@ Images below come from real runs of the scripts on the synthetic self-test, not 
 
 A synthetic propeller tone (110 Hz, 80 m/s, 900 m altitude, gently turning) with tone amplitude 0.29 against noise σ 1.0 is recovered as f0 110.0 Hz, 80.4 m/s, slant 1039 m (true 1040 m). With the recording start known to ±2 s, the true grid point ranks first (0 m error on a 200 m grid). Without a known time, a single flyover lands at the right distance but about 1.4 km off along the track, which is the ambiguity the video describes. A second flyover at a fixed offset, or a known time, is required.
 
-## Real-world geolocation results (v0.2.0)
+## Evaluation harness
+
+`scripts/eval_batch.py` runs detect + locate on every clip in a manifest and scores the result against ground truth. It reads ADS-B only from the cache, so fetch the days first (for example with one online `dopplergeo locate` run per day and region, or the eval's own fetch scripts).
+
+```bash
+export DOPPLER_GEO_CACHE=/path/to/cache
+python3 scripts/eval_batch.py manifest.json --out runs/tune --split tune --tol 30 --jobs 2 \
+    --det broadband=true --set temper_extra=4
+```
+
+Flags: `--tol` (one or more start-time tolerances, s; default 30 600), `--split`, `--only ID ...`, `--set key=value` (`score.Options`), `--det key=value` (`detect_events`), `--radius-km` (15), `--offset-km` (5: the search centre is moved off the truth at a bearing derived from the id), `--jobs`, `--det-jobs`, `--heatmaps`, `--resume`.
+
+Manifest: a JSON list. Each entry needs `id`, `audio` (path), `t0_unix` (UTC start of the audio), `truth_lat`, `truth_lon`, `truth_unc_m` (how well the recording spot is known) and `split`. Optional: `skip` (truthy: the harness ignores the clip) and `tol_s_fixed` (a per-clip tolerance that overrides `--tol`, e.g. 9000 s for dab_part1). The other fields (`excluded` with a reason, `loc_evidence`, `time_evidence`, `license`, `attribution`, `url`) are provenance only: the harness does not read `excluded`, so excluded clips are left out with `--split`/`--only`. A real tune entry, trimmed:
+
+```json
+{"id": "man_hg0909", "audio": "audio/fs869798.wav", "t0_unix": 1788993240,
+  "truth_lat": 53.440355, "truth_lon": -2.099878, "truth_unc_m": 300, "split": "tune6",
+  "license": "CC0", "attribution": "Sadiquecat (freesound.org/s/869798)"}
+```
+
+Outputs: `rows.jsonl`, one row per clip and tolerance (`err_km`, `confidence`, `events`, `n_consistent`, `a68_km2`/`a95_km2`, `in95` and `in95u` = truth inside the 95 % area, unpadded / padded by `truth_unc_m`, and a `calib` sweep over `temper_extra`), and per-clip event caches. Datasets, split policy and how ground truth was established: [docs/evaluation.md](docs/evaluation.md).
+
+## Real-world results
+
+### Tonal pipeline (0.2.0)
 
 The full pipeline (events → historical ADS-B → grid search) was evaluated on public recordings with a known location and start time: the original 12 clips plus 25 livestream VODs filmed at known spotting locations. Clips were split by location before any tuning, giving 23 tune clips and 14 held-out clips. Runs use a ±30 s start-time tolerance (the original tune clips also keep a ±600 s run for crq; dab_part1 runs at ±9000 s). Each run searched a 15 km radius around a centre offset 5 km from the truth. Settings were tuned on the tune split only. The held-out split was then run once with the frozen defaults (`sigma_model=0.008`, `detect_prob=0.15`, sub-harmonic relabel, CPA-distance consistency term, `temper_extra=4`).
 
@@ -104,7 +213,7 @@ The full pipeline (events → historical ADS-B → grid search) was evaluated on
 
 *"95% area" is the 95% credible area padded by the truth location's own uncertainty, using the shipped calibration. Point estimates on the 5 original held-out clips at ±30 s are unchanged from the previous run; the median moved because the new held-out clips are harder, not because the method got worse.
 
-**Livestream clips mostly fail.** 12 of the 16 new tune clips and 6 of the 9 new held-out clips produced no usable events. Spectrograms show why: the stream audio is dominated by host commentary or gated ATC radio, is high-passed (around 80–120 Hz) and compressed, and jet passes appear as broadband noise without tonal engine lines. ADS-B had plenty of close passes for these clips, so the data side is not the problem. Four of these tune clips were diagnosed individually and marked excluded in the manifest; the rest are counted as failures above. Fixing this would need a broadband Doppler model rather than looser detector gates.
+**Livestream clips mostly fail.** 12 of the 16 new tune clips and 6 of the 9 new held-out clips produced no usable events. Spectrograms show why: the stream audio is dominated by host commentary or gated ATC radio, is high-passed (around 80–120 Hz) and compressed, and jet passes appear as broadband noise without tonal engine lines. ADS-B had plenty of close passes for these clips, so the data side is not the problem. Four of these tune clips were diagnosed individually and marked excluded in the manifest; the rest are counted as failures above. Fixing this needed a broadband model rather than looser detector gates; see the next section.
 
 **Field recordings (chunk 6).** A third set used raw, dated, geotagged field recordings with no commentary: Freesound (CC0/CC-BY) and radio aporee ::: maps (public domain), each with the recordist's own date/time and map pin. Clip times were checked against ADS-B (aircraft passing near the pin line up with audible passes in most clips), and clips with no ADS-B data or no aircraft in the clip were excluded. The 7 usable tune clips (Manchester approach x2, Brussels x2, Burgundy, Gergueil, Ramallah) gave 2 solved runs out of 14 (man_hg0903 10.5 km, Ramallah 19.8 km, both low confidence); the other 12 runs found no events. The 4 test clips available so far (Orlando, Edinburgh, The Hague, Munich north runway) were run once with frozen settings and all 8 runs found no events. Spectrograms show why: even with clean audio and full low end, close jet passes are broadband, with strong ground-reflection (Lloyd's mirror) interference fringes, and their tonal lines are weak or short. Without a broadband/fringe Doppler model, the detector rejects them, and no gate change was made. One robustness fix came out of this: cache files (DEM tiles, weather, type table, ADS-B crops) are now written atomically, so parallel jobs no longer read half-written files.
 
@@ -123,19 +232,22 @@ The full pipeline (events → historical ADS-B → grid search) was evaluated on
 
 **Limitations:** on unseen clips the method mostly fails (1 of 14 held-out runs under 3 km, 6 with no events at all). An `ok` flag is not a guarantee: osh_0719 was the only held-out `ok` result, it was 13.2 km off, and its 95% area missed the truth. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With these small samples the numbers are indicative, not precise. Treat any output as a hypothesis to check, not as a location.
 
-## Broadband (ground-reflection) events (feat/broadband, experimental)
+### Broadband events (0.3.0-dev, `--det broadband=true`)
 
-`detect_events(..., broadband=True)` (eval: `--det broadband=true`) also detects jet passes that have no tonal lines. It uses the Lloyd's-mirror multipath delay τ(t) ≈ 2·h·sin(elevation)/c between the direct sound and the ground-reflected sound. The delay is measured with a band-limited cepstrum, tracked with Viterbi, and fitted to the straight-pass curve τ_max/√(1+((t−t_c)/T)²), where T is the CPA slant range divided by speed. The method follows Lo & Ferguson, IEEE TAES 39(1) 2003. The scorer matches the normalised curve to each ADS-B candidate's predicted sin(elevation), and the unknown microphone height is fitted as a scale. Tonal gates are unchanged.
-
-Results at ±30 s on tune:
+Results at ±30 s on tune, with the code frozen at ff25280:
 - man_hg0903 (a 75-minute recording under the Manchester approach) went from 10.5 km to **0.19 km**, flagged ok.
 - man_hg0909 went from no events to **0.33 km**, flagged ok.
 - On the old tune clips: vny_0513 went from 15.4 to 2.95 km, ord from 15.2 to 5.9 km and jfk from 10.8 to 4.6 km. crq went from 1.16 to 1.55 km. The other old clips were unchanged.
-- Most field and livestream clips still give no broadband events: a clear fringe pattern is needed. Held-out results: see PR #4 (one frozen run, in progress).
+- Most field and livestream clips still give no broadband events: a clear fringe pattern is needed.
+
+**Held-out: pending.** The 18 held-out clips (5 original test, 9 livestream test2, 4 field-recording test6) are being run once with the frozen settings. Results will be added here and in PR #4 as they come in, whatever they show. Tune gains do not show that the method generalises.
 
 ![Before/after per clip](docs/screenshots/summary_broadband.png)
 
-## Real-world test (v0.1.1)
+### Manual scripts on YouTube audio (v0.1.1)
+
+**Automatic detection on the same clips (0.2.0, no hand-picked bands):** Cessna 421 clip: 1 event (49 m/s, 159 m CPA). "Planes overhead / birds" clip: 2 events (57 m/s at 1.4 km; 67 m/s at 1.1 km). Amsterdam city ambience, a 23 s jet clip, and the Conquest tower flyby: 0 events (expected: no clean tonal pass).
+
 
 Run on 5 public YouTube clips (audio only), 2026-11-02:
 
@@ -159,13 +271,13 @@ The tracker works on clean real tones. You still pick the frequency band and tim
 
 ## Limitations
 
-- Detection needs tonal (propeller / engine) lines. Broadband jet roar, commentary-heavy or high-passed livestream audio give no events.
-- On held-out real clips only 1 of 14 runs was under 3 km (median 12.1 km for solved runs). A `confidence: ok` flag is not a guarantee; with `low`, use the whole search area as the answer.
-- One flyover leaves an along-track ambiguity, and a straight track a left/right mirror ambiguity.
-- The standalone scripts (`doppler_track.py`, `score_candidates.py`) still need a hand-picked band; the `dopplergeo` package does not.
-- Needs a date, adsb.lol coverage for that day (some 2023-2024 releases have no data), a region of at most 60 km radius, and roughly 3 GB of download per uncached day.
+- Tonal detection needs propeller or engine lines. Broadband detection needs a clear ground-reflection fringe pattern (hard, flat ground; a close pass; the CPA inside the recording). Commentary-heavy, gated or high-passed livestream audio gives no events either way.
+- Generalisation is unproven: 1 of 14 tonal held-out runs was under 3 km (median 12.1 km for solved runs), and broadband held-out results are pending. `confidence: ok` is not a guarantee. With `low`, use the whole search area as the answer.
+- One flyover leaves an along-track ambiguity, and a straight track a left/right mirror ambiguity. Turning flights fail the straight-pass broadband fit. Harmonics that cross confuse the manual `doppler_track.py`.
+- Broadband and scorer options are only reachable from Python or the eval harness, not the CLI or tools.
+- Needs a date, adsb.lol coverage for that day (some 2023–2024 releases have no data), a region of at most 60 km radius, and about 3 GB of download per uncached day.
 
-## Ethics
+## Privacy and ethics
 
 Use for forensics, journalism, research, or auditing your own recordings. Locating a person without consent can put them in danger; follow local law. Results are probabilistic and need independent visual confirmation. To protect your own clips: high-pass filters and talking over the tone do not reliably remove it, and it can survive phone compression; cutting segments, stronger noise suppression, and stripping timestamps help. Check your own spectrogram with `doppler_track.py` before publishing.
 
@@ -173,9 +285,16 @@ Use for forensics, journalism, research, or auditing your own recordings. Locati
 
 ```bash
 pip install -e ".[dev]" pytest   # needs ffmpeg on PATH
-python -m pytest tests -q          # network tests run only with DOPPLER_GEO_NETWORK_TESTS=1
+python3 -m pytest tests -q        # network tests run only with DOPPLER_GEO_NETWORK_TESTS=1
+ruff check . && ruff format --check .
 ```
+
+`tests/test_broadband.py` covers the synthetic broadband pass (geometry recovered for 1.5 m and 5 m mic heights), noise-only and steady-tone negatives, the scorer picking the true point, and tonal events ignoring jets.
+
+Screenshot from an early 0.2.0 run (21 tests). The suite now has 41 tests: 39 pass, 2 network tests skip.
+
+![pytest output, early 0.2.0](docs/screenshots/v02-terminal-tests.png)
 
 ## License
 
-MIT
+MIT for the code. Data you download stays under its own licence (above): ADS-B crops in the cache are ODbL.

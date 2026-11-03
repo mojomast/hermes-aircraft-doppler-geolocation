@@ -1,8 +1,9 @@
 name: aircraft-doppler-geolocation
-version: "0.2.0"
+version: "0.3.0"
 description: >-
-  Detect aircraft flyover Doppler tones in a recording and estimate where it
-  was made by scoring them against adsb.lol ADS-B history. Downloads public
+  Detect aircraft flyovers in a recording (Doppler tones, plus experimental
+  ground-reflection broadband events) and estimate where it was made by
+  scoring them against adsb.lol ADS-B history. Downloads public
   ADS-B, DEM and weather data (no account); offline mode uses the cache only.
 author: mojomast
 license: MIT

@@ -37,7 +37,7 @@ class SkillFileTests(unittest.TestCase):
         if "_raw" not in fm:
             self.assertEqual(fm["name"], "aircraft-doppler-geolocation")
             self.assertIn("Use when", fm["description"])
-            self.assertEqual(str(fm["version"]), "0.2.0")
+            self.assertEqual(str(fm["version"]), "0.3.0")
         for h in [
             "## When to Use",
             "## Prerequisites",
@@ -52,8 +52,8 @@ class SkillFileTests(unittest.TestCase):
     def test_versions_agree(self):
         manifest = (ROOT / "plugin.yaml").read_text()
         pyproject = (ROOT / "pyproject.toml").read_text()
-        self.assertIn('version: "0.2.0"', manifest)
-        self.assertIn('version = "0.2.0"', pyproject)
+        self.assertIn('version: "0.3.0"', manifest)
+        self.assertIn('version = "0.3.0"', pyproject)
 
 
 class PhysicsTests(unittest.TestCase):
