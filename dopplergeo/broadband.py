@@ -152,11 +152,11 @@ def detect_broadband(
     hop_s=0.25,
     z_thr=4.0,
     min_z=5.0,
-    min_span_s=6.0,
+    min_span_s=4.0,
     p_max=1e-4,
     min_contrast=1.15,
     max_rel_rms=0.08,
-    T_bounds=(2.0, 150.0),
+    T_bounds=(0.8, 150.0),  # T = S0/v: ~1 s for a 70 m/s jet 70 m overhead
     **cep_kw,
 ):
     """Broadband pass events with gating. Returns (events, diag)."""
