@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Efficiency pass. Detection results, locations and credible areas are bit-identical to 0.3.0 on the tune clips checked (see the PR); the changes below only remove repeated work.
+
+- Event cache shared by `detect`, `locate` and the eval harness (`dopplergeo/evcache.py`): keyed by audio content hash, decode rate, detector settings and detector source hash; atomic writes, corrupt or mismatched entries are misses, LRU pruning. Changing region, date, tolerance or scorer options no longer repeats detection. `--no-cache` / `cache: false` to bypass. Reports carry `detection_cache.hit`.
+- `--no-plots` (CLI) / `plots: false` (tools) / `plots=False` (Python) skips `detection.png` and `heatmap.png`. Default unchanged (plots on).
+- `locate` validates region and date before decoding audio. A missing hint now returns its error without `events` in the report.
+- Scoring: event arrays prepared once per search and option-dependent values once per level; one shared pass-geometry slice per (point, pass) for the span prefilter and every event's prediction; plane velocities from one full-track gradient (slice ends patched to match `np.gradient`); `find_passes` evaluates only track samples near each chunk and builds slant ranges without a 3-D temporary; row-wise nanmedian without NumPy's masked-array path.
+- Detection: Viterbi jump search vectorised (tonal and broadband, same tie-breaking); masked score updated in place; frame-major backpointers. Broadband polynomial detrend uses the (nf × 5) factors instead of a dense nf × nf projection.
+- DEM: parsed tiles and decoded blocks reused across `elevation()` calls (bounded LRU, 4 tiles × 16 blocks). ADS-B: cached crops stream-filtered line by line; crop headers memoised.
+- Eval harness: events from the event cache (old per-run pickles were keyed on the audio path); `run_key` per row, checked on `--resume`; `--jobs 0` (new default) sizes workers from available memory (`--mem-per-job-gb`, default 2); spawned workers get `OMP/OPENBLAS/MKL_NUM_THREADS = cpu // jobs`.
+- `scripts/profile_clip.py`: stage timings, peak RSS and a result pickle for before/after comparisons.
+
 ## 0.3.0 — 2026-11-03
 
 - Broadband (jet) pass detection from the ground-reflection (Lloyd's mirror) multipath delay: band-limited cepstrogram, Viterbi quefrency track, straight-pass fit τ(t) = τ_max/√(1+((t−t_c)/T)²), and gates (`dopplergeo/broadband.py`). Opt-in with `detect_events(..., broadband=True)` or `eval_batch.py --det broadband=true`; enabled from the CLI with `--broadband` (detect and locate) and from the tools with `broadband: true`.
