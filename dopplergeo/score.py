@@ -73,6 +73,10 @@ class Options:
     cpa_log_sd: float = 1.0
     cpa_floor_m: float = 150.0  # below this both ranges are "overhead"
     cpa_weight: float = 1.0  # 0 disables the term
+    # broadband (ground-reflection delay) events: observed tau/tau_max vs predicted
+    # sin(elevation) times an unknown scale 1/sin(elev at CPA) (mic height unknown)
+    bb_scale_bounds: tuple = (1.0, 60.0)
+    bb_sigma_model: float = 0.06  # relative model error of the normalised delay curve
     n_seeds: int = 10  # coarse-level basins refined (flat likelihoods need more)
 
 
@@ -188,6 +192,26 @@ def predicted_ratio(pl: Plane, g, t_abs, c, k_cpa, half_window_s):
     return out
 
 
+def predicted_sin_elev(pl: Plane, g, t_abs, c, k_cpa, half_window_s):
+    """sin(elevation) of the aircraft seen from g at receive times t_abs (emission-time solved)."""
+    lo = max(0, k_cpa - int(half_window_s) - 120)
+    hi = min(len(pl.tau), k_cpa + int(half_window_s) + 120)
+    if hi - lo < 3:
+        return None
+    d = pl.pos[lo:hi] - g
+    r = np.linalg.norm(d, axis=1)
+    trecv = pl.tau[lo:hi] + r / c
+    se = np.clip(d[:, 2] / np.maximum(r, 1.0), 0.0, 1.0)
+    ok = (t_abs >= trecv[0]) & (t_abs <= trecv[-1])
+    out = np.interp(t_abs, trecv, se)
+    out[~ok] = np.nan
+    return out
+
+
+def is_broadband(ev) -> bool:
+    return getattr(ev, "kind", "tonal") == "broadband"
+
+
 def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=None):
     """Best log-likelihood of one event against one pass over the clock slack.
 
@@ -201,7 +225,10 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
     T0s = t0_center + shifts
     t_abs = T0s[:, None] + times[None, :]
     half = (times.max() - times.min()) / 2 + opts.dt_tol_s + 60
-    D = predicted_ratio(pl, g, t_abs, c, k_cpa, half)
+    bb = is_broadband(ev)
+    pred = predicted_sin_elev if bb else predicted_ratio
+    bounds = opts.bb_scale_bounds if bb else opts.scale_bounds
+    D = pred(pl, g, t_abs, c, k_cpa, half)
     if D is None:
         return -np.inf, None, None
     sigma = event_sigma(ev, opts)
@@ -220,8 +247,8 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
         num = (w * oz * Dz).sum(1)
         den = (w * Dz * Dz).sum(1)
         s = np.where(den > 0, num / np.maximum(den, 1e-12), s)
-    s = np.clip(s, *opts.scale_bounds)
-    hit_bound = (s <= opts.scale_bounds[0] + 1e-9) | (s >= opts.scale_bounds[1] - 1e-9)
+    s = np.clip(s, *bounds)
+    hit_bound = (s <= bounds[0] + 1e-9) | (s >= bounds[1] - 1e-9)
     res = np.where(valid, oz - s[:, None] * Dz, 0.0)
     res = np.clip(
         res, -4 * sigma, 4 * sigma
@@ -231,7 +258,8 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
     # samples outside the modelled span count as full outliers
     rss = rss + (len(times) - n) * (4 * sigma) ** 2
     ll = -0.5 * rss / sigma**2 * event_weight(ev, opts)
-    ll -= 0.5 * ((s - 1.0) / opts.scale_prior_sd) ** 2
+    if not bb:  # broadband scale (1/sin elevation at CPA) is log-uniform
+        ll -= 0.5 * ((s - 1.0) / opts.scale_prior_sd) ** 2
     ll[frac < 0.5] = -np.inf
     ll[hit_bound] = -np.inf  # scale outside the plausible range: not this aircraft
     j = int(np.argmax(ll))
@@ -239,6 +267,8 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
 
 
 def event_sigma(ev, opts: Options) -> float:
+    if is_broadband(ev):
+        return float(np.hypot(ev.sigma_ratio, opts.bb_sigma_model))
     return float(
         np.hypot(max(ev.sigma_ratio * 0.5, opts.sigma_floor), opts.sigma_model)
     )
@@ -338,6 +368,12 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
         for ev in events:
             cand = []
             for pi, k, rm, tr in P:
+                if (
+                    not opts.include_jets
+                    and not is_broadband(ev)
+                    and planes[pi].cls not in TONAL_CLASSES
+                ):
+                    continue  # jets are only loaded for broadband events
                 T0c = tr - ev.t_cpa
                 if t0_window and not (
                     t0_window[0] - opts.dt_tol_s <= T0c <= t0_window[1] + opts.dt_tol_s
@@ -346,9 +382,10 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                 # cheap scale-free prefilter: the predicted Doppler span over the
                 # event's duration must be able to cover the observed span
                 half = (ev.times[-1] - ev.times[0]) / 2 + opts.dt_tol_s
-                sp = _pass_span(planes[pi], gxyz[i], k, half, c)
-                if sp is None or sp + opts.span_tol < spans[id(ev)]:
-                    continue
+                if not is_broadband(ev):
+                    sp = _pass_span(planes[pi], gxyz[i], k, half, c)
+                    if sp is None or sp + opts.span_tol < spans[id(ev)]:
+                        continue
                 ll, T0, sc = event_pass_loglik(ev, planes[pi], gxyz[i], k, tr, c, opts)
                 if np.isfinite(ll):
                     ll += cpa_consistency(ev, rm, opts)
@@ -396,6 +433,8 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
             used_pl = {u[1] for u in used}
             for pi, _k, rm, tr in P:
                 if pi in used_pl or rm > opts.r_silence_m:
+                    continue
+                if not opts.include_jets and planes[pi].cls not in TONAL_CLASSES:
                     continue
                 if T0h <= tr <= T0h + clip_dur:
                     tot -= opts.silence_penalty / 6.0 * silence_cost(rm, opts)

@@ -106,7 +106,10 @@ def run_one(args):
         lat0, lon0 = region_center(entry, offset_km)
         o = score.Options(**opt_kw)
         tracks = load_tracks(T0 - tol - 900, T0 + tol + dur + 900)
-        pl = score.prepare_planes(tracks, lat0, lon0, include_jets=o.include_jets)
+        need_jets = o.include_jets or any(
+            getattr(e, "kind", "tonal") == "broadband" for e in ev
+        )
+        pl = score.prepare_planes(tracks, lat0, lon0, include_jets=need_jets)
         row["planes"] = len(pl)
         if not ev or not pl:
             row["error"] = "no events" if not ev else "no planes"

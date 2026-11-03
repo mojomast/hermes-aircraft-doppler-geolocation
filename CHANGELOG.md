@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.3.0 — 2026-11-03
+
+- Broadband (jet) pass detection from the ground-reflection (Lloyd's mirror) multipath delay: band-limited cepstrogram, Viterbi quefrency track, straight-pass fit τ(t) = τ_max/√(1+((t−t_c)/T)²), and gates (`dopplergeo/broadband.py`). Opt-in with `detect_events(..., broadband=True)` or `eval_batch.py --det broadband=true`; enabled from the CLI with `--broadband` (detect and locate) and from the tools with `broadband: true`.
+- CLI `locate --temper-extra K` and tool parameter `temper_extra` (95 % area calibration, default 4).
+- `--offline` "no cached ADS-B crop" error prints plain lat/lon numbers, not `np.float64(...)`. `detection.png` now draws broadband events (it crashed on them).
+- `Event.kind` (`tonal` / `broadband`), `tau_max_s`, `T_s`. A broadband event within 15 s of a tonal event is dropped.
+- Scorer: broadband events match predicted sin(elevation) with the unknown mic height as a scale (`bb_scale_bounds=(1, 60)`, `bb_sigma_model=0.06`). ADS-B jets are scored for broadband events only; tonal scoring is unchanged.
+- `synth.render_broadband` (direct + image-receiver path) and `tests/test_broadband.py`.
+- Gate change made on tune data: T lower bound 0.8 s and minimum span 4 s (very low passes).
+- Docs: README restructured (CLI flags, tool parameters with example output, how to read 95 % regions, data and eval licences, harness), new `docs/broadband.md` and `docs/evaluation.md`. Tune results: man_hg0903 10.5 → 0.19 km, man_hg0909 none → 0.33 km. Held-out (18 clips, one frozen run): 2/18 under 3 km (dfw 1.96, lgb 2.38) vs 1/14 tonal-only; 11 solved vs 8; median of solved 13.2 km vs 12.1; regressions ads_0821b 7.9 → 17.2 km and syd 11.0 → 18.6 km.
+
+## 0.2.0 — unreleased (folded into 0.3.0)
 
 - New `dopplergeo` package, CLI (`dopplergeo detect|locate`), and Hermes tools `doppler_detect` / `doppler_locate`.
 - Automatic detection: whitening, harmonic sum, CFAR, multi-ridge Viterbi, harmonic-family fit, segment linking, acceptance test.

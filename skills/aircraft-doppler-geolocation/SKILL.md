@@ -5,7 +5,7 @@ description: >-
   curves matched against ADS-B flight tracks. Use when the user wants to find
   where or when a clip was recorded from background plane sound, or to audit
   their own recording for location leakage.
-version: "0.2.0"
+version: "0.3.0"
 author: mojomast
 license: MIT
 compatibility: >-
@@ -23,14 +23,21 @@ Locates where (and optionally when) an audio/video recording was made by finding
 aircraft flyover Doppler curves in its spectrogram and matching them against real ADS-B
 flight tracks. Method follows the colsto video "I discovered a sound that leaks your exact
 location" (https://www.youtube.com/watch?v=UytYrhYLOKI). It is NOT mains-hum/ENF analysis,
-and it does not work without an audible-or-inaudible propeller/jet tonal in the recording.
+and it needs either a propeller/engine tonal (audible or not) or, with the experimental
+broadband mode, a jet pass whose ground reflection makes a clear fringe pattern.
 
-## Fast path (0.2.0)
+## Fast path (0.2.0+)
 
-1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass: stop and say so.
+1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass. By default the tools detect tonal events only. If the spectrogram shows broadband jet passes with ground-reflection fringes (evenly spaced bands that converge and widen around closest approach), rerun with `broadband: true` (see below); otherwise stop and say so.
 2. `doppler_locate(recording, date_hint, region_hint="lat,lon,radius_km")`: needs a date (or file metadata) and a region. Returns best point, 68/95 % areas, matched aircraft, `heatmap.png`. If metadata contains GPS it is reported directly.
 3. Read `best.confidence` first. `ok` needs at least 2 events that consistently match an aircraft (`best.n_consistent_events`). With `low`, the report carries a `warning` and `credible_area_km2["95_low_conf"]` (the whole search disc): report the search region, not the point. Only with `ok` is `credible_area_km2["95"]` a usable 95 % region, and even then it is roughly calibrated (on held-out clips the only `ok` result was 13 km off).
 4. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.
+
+CLI equivalent: `python3 -m dopplergeo detect REC [--out DIR]` and `python3 -m dopplergeo locate REC --date D --region lat,lon,km [--time-tolerance S] [--offline] [--include-jets] [--broadband] [--temper-extra K] [--out DIR]`. Cache: `~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`. Give an ISO start time with a small `--time-tolerance` (e.g. 30 s) whenever you know it; a date alone searches the whole UTC day.
+
+## Broadband mode (0.3.0, experimental)
+
+Jets often give no tonal line. `detect_events(x, sr, broadband=True)` also finds passes from the ground-reflection (Lloyd's mirror) multipath delay τ(t) = τ_max/√(1+((t−t_c)/T)²), T = S0/v, measured with a cepstrogram, Viterbi-tracked and gated (span ≥ 4 s, cepstral z ≥ 5, F-test vs constant, contrast ≥ 1.15, CPA inside, 0.8 ≤ T ≤ 150 s, rel rms ≤ 0.08). Broadband events have `kind="broadband"`, `tau_max_s`, `T_s`, and no speed or distance of their own. The scorer matches them to ADS-B jets as well as props. Enable it with `broadband: true` on `doppler_detect` / `doppler_locate`, or `--broadband` on the CLI. Results: on tune it fixed two Manchester field recordings (0.19 and 0.33 km). On held-out (18 clips) it gave 2 runs under 3 km against 1 of 14 without it, and more solved runs, but a slightly worse median (13.2 km against 12.1) and two regressions. So run it when the tonal pass finds nothing, and present broadband-based fixes as experimental. `temper_extra` (default 4) widens or narrows the 68/95 % areas; do not lower it to make a result look sharper. Method and maths: `docs/broadband.md` in the plugin repo.
 
 ## When to Use
 
@@ -112,6 +119,8 @@ slant distance. c ≈ 331.3·√(1+T/273.15) m/s.
 - 200 m grids can put the true point ~141 m off and score poorly — refine to 100 m.
 - Harmonics that cross each other make the ridge hop between tones. Use a band holding a single harmonic. A turning plane fails the straight-pass fit. Both are expected rejections.
 - Wind/temperature shift c and arrival times; MP3/AAC can hide but not remove low tones.
+- Livestream audio (host commentary, gated ATC radio, high-passed at 80–120 Hz, compressed) usually gives no events in either mode. Do not loosen gates to force a result.
+- Do not report the best point of a `confidence: low` result as the location.
 
 ## Verification
 

@@ -221,7 +221,10 @@ def fetch_tracks(
     if hit:
         return _read_cache(hit, bbox, t0, t1)
     if offline and not tar_parts:
-        raise OfflineMiss(f"no cached ADS-B crop for {day} covering {bbox}")
+        raise OfflineMiss(
+            f"no cached ADS-B crop for {day} covering "
+            + "lat {0:.4f}..{2:.4f}, lon {1:.4f}..{3:.4f}".format(*map(float, bbox))
+        )
     try:
         types = load_types(offline=offline)
     except (OfflineMiss, OSError):
