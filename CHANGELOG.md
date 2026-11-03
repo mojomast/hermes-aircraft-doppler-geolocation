@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Efficiency pass; the changes below only remove repeated work. On the 7 tune clips checked (see PR #5), events, search likelihoods, locations and credible areas are bit-identical to 0.3.0 except man_hg0903, where the factored broadband detrend changes floating-point rounding: event parameters differ by up to ~3e-5 relative and log-likelihoods by ~2.5e-6 relative, with identical best point, error, 95 % area, matches and coverage.
+Efficiency pass; the changes below only remove repeated work. On the 7 tune clips checked (see PR #5), events, every search level's log-likelihoods, start times, matches, best point, credible areas and coverage are bit-identical to 0.3.0 (max observed difference 0). An earlier revision of this branch differed on man_hg0903 (events up to ~3e-5 relative): that came from the vectorised broadband Viterbi accumulating float32 scores in float32, not from the detrend, and is fixed (float64 accumulation as in 0.3.0).
 
 - Event cache shared by `detect`, `locate` and the eval harness (`dopplergeo/evcache.py`): keyed by audio content hash, decode rate, detector settings and detector source hash; atomic writes, corrupt or mismatched entries are misses, LRU pruning. Changing region, date, tolerance or scorer options no longer repeats detection. `--no-cache` / `cache: false` to bypass. Reports carry `detection_cache.hit`.
 - `--no-plots` (CLI) / `plots: false` (tools) / `plots=False` (Python) skips `detection.png` and `heatmap.png`. Default unchanged (plots on).
