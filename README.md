@@ -6,7 +6,7 @@ It is a community plugin by [Kyle Durepos](https://github.com/mojomast). It is n
 
 ![Catalog banner](docs/catalog-banner.png)
 
-**Status:** 0.3.0 in development (branch `feat/broadband`, draft PR #4, on top of the unreleased 0.2.0 in draft PR #2). Nothing here is tagged or released, and the Hermes catalog still pins 0.1.1. The method locates clean multi-pass recordings to within about 1 km but mostly fails on unseen clips. Read [Real-world results](#real-world-results) before you trust any output.
+**Status:** 0.3.0, released 2026-11-03 (tag `v0.3.0`). It locates clean multi-pass recordings to within about 1 km but mostly fails on unseen clips: 2 of 18 held-out runs came in under 3 km. Read [Real-world results](#real-world-results) before you trust any output.
 
 Contents: [Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Hermes tools](#hermes-tools) · [How it works](#how-it-works) · [Data sources and licences](#data-sources-and-licences) · [Evaluation](#evaluation-harness) · [Real-world results](#real-world-results) · [Limitations](#limitations) · [Privacy and ethics](#privacy-and-ethics)
 
@@ -36,6 +36,7 @@ From a checkout without installing, use `python3 -m dopplergeo` in place of `dop
 dopplergeo detect clip.wav --out ev/                                         # find flyovers (offline)
 dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --out run/ # download ADS-B for the day and search
 dopplergeo locate clip.wav --date 2026-09-21T14:13:20Z --time-tolerance 30 --region 43.8,-79.3,8 --offline --out run/
+dopplergeo locate clip.wav --date 2026-09-21T14:13:20Z --time-tolerance 30 --region 43.8,-79.3,8 --broadband --out run/  # + jet passes
 ```
 
 `detect` writes `detect.json` and `detection.png`. `locate` writes `report.json` and `heatmap.png` and prints the report. The exit code is 2 when `ok` is false (for example: no events, or `--offline` with nothing cached for that day and region).
@@ -48,14 +49,15 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 
 ## CLI
 
-`python3 -m dopplergeo detect RECORDING [--out DIR]`
+`python3 -m dopplergeo detect RECORDING [--out DIR] [--broadband]`
 
 | Flag | Meaning |
 | --- | --- |
 | `RECORDING` | Any audio or video file ffmpeg can decode (resampled to 4 kHz mono). |
 | `--out DIR` | Output directory. Default: `<recording>.doppler/`. |
+| `--broadband` | Also detect jet passes from the ground-reflection (Lloyd's mirror) delay (experimental, default off). |
 
-`python3 -m dopplergeo locate RECORDING [--date D] [--region R] [--offline] [--time-tolerance S] [--include-jets] [--out DIR]`
+`python3 -m dopplergeo locate RECORDING [--date D] [--region R] [--offline] [--time-tolerance S] [--include-jets] [--broadband] [--temper-extra K] [--out DIR]`
 
 | Flag | Meaning |
 | --- | --- |
@@ -63,10 +65,12 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 | `--region` | `lat,lon,radius_km`, radius at most 60 km. Required unless the file carries GPS tags. If it does, those coordinates are reported directly (`method: metadata-gps`). |
 | `--offline` | Use only the cache (ADS-B crops, DEM, weather). No network. |
 | `--time-tolerance` | Seconds of slack around an ISO datetime. Default 600. The evaluation uses 30. |
-| `--include-jets` | Also score known jet types against tonal events. Default off: jets rarely give tonal lines and add false matches. |
+| `--include-jets` | Also score known jet types against tonal events. Default off: jets rarely give tonal lines and add false matches. Broadband events always consider jets. |
+| `--broadband` | Also detect and score broadband (ground-reflection) jet passes. Experimental, default off. In the held-out run it gave more answers but a slightly worse median (see results). |
+| `--temper-extra` | Posterior temper on top of the Birge ratio, which sets how wide the 68 %/95 % areas are. Default 4, calibrated on tune. Larger values give wider, safer areas. |
 | `--out` | Output directory. Default: `<recording>.doppler/`. |
 
-**Broadband events and scorer options are not CLI flags yet.** In 0.3.0-dev, broadband (ground-reflection) detection is opt-in from Python, `detect.detect_events(x, sr, broadband=True)`, or from the eval harness, `--det broadband=true`. Scorer settings such as `temper_extra` (default 4) are `dopplergeo.score.Options` fields, set in the harness with `--set temper_extra=4`. The CLI and the Hermes tools use the defaults and detect tonal events only.
+The same options from Python: `locate.locate(..., broadband=True, temper_extra=4)` and `locate.detect_only(rec, out, broadband=True)`. Other scorer settings are `dopplergeo.score.Options` fields, which the eval harness sets with `--set key=value`.
 
 **Cache.** Downloads are cached in `~/.cache/doppler-geo`, or in `$DOPPLER_GEO_CACHE` if set: ADS-B crops per day and region, DEM tiles, weather and the type table. Writes are atomic, so parallel runs can share one cache. Only the crop of each adsb.lol day is stored, not the ~3 GB release.
 
@@ -76,10 +80,10 @@ The plugin registers one skill, `aircraft-doppler-geolocation:aircraft-doppler-g
 
 | Tool | Parameters | Network |
 | --- | --- | --- |
-| `doppler_detect` | `recording` (required), `out_dir` | none |
-| `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
+| `doppler_detect` | `recording` (required), `out_dir`, `broadband` (bool, default false) | none |
+| `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `broadband` (bool, default false), `temper_extra` (number, default 4), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
 
-`doppler_detect` returns `events` (per event: `kind` (`tonal`, or `broadband` in 0.3.0-dev when enabled from Python), `t_cpa`, `f0_hz`, `speed_mps`, `cpa_slant_m`, `harmonics`, `snr_z`, `f_test`, `p_value`, plus `tau_max_s` and `T_s` for broadband events), `rejected_segments` with reasons, and `files.detection_png`.
+`doppler_detect` returns `events` (per event: `kind` (`tonal`, or `broadband` when `broadband` is true), `t_cpa`, `f0_hz`, `speed_mps`, `cpa_slant_m`, `harmonics`, `snr_z`, `f_test`, `p_value`, plus `tau_max_s` and `T_s` for broadband events), `rejected_segments` with reasons, and `files.detection_png`.
 
 `doppler_locate` example output. This is a real run on the synthetic two-pass scenario from `tests/test_v02.py` (two Cessnas, injected tracks), trimmed:
 
@@ -112,7 +116,7 @@ The plugin registers one skill, `aircraft-doppler-geolocation:aircraft-doppler-g
 
 **Tonal Doppler (0.2.0).** A propeller or engine line at rest frequency f0 is heard at f = f0·c/(c − v_r(τ)), where v_r is the radial velocity at emission time τ and the sound arrives at t = τ + r(τ)/c. The size of the drop gives speed, its steepness gives the CPA slant distance. Detection uses a whitened 1 s spectrogram, a harmonic sum (k ≤ 6), CFAR, Viterbi multi-ridge tracking with an off state, a joint harmonic-family fit, segment linking across dropouts, and an acceptance test (F-test against a constant tone, frequency drop, plausible speed, CPA inside the tone, non-degenerate distance). No hand-picked bands. Ferguson (1992, JASA 92(3)) and Ferguson & Lo (2000, JASA 108(4)) describe the same narrow-band model.
 
-**Broadband multipath delay (0.3.0-dev, opt-in).** Jets often give no tonal line, but a microphone at height h above ground hears the direct sound plus a ground-reflected copy delayed by τ(t) ≈ 2·h·sin(elevation)/c (Lloyd's mirror). The log spectrum then has fringes spaced 1/τ, and the band-limited power cepstrum peaks at quefrency τ. For a straight level pass, τ(t) = τ_max/√(1+((t−t_c)/T)²) with T = S0/v (CPA slant range over speed). The detector tracks the cepstral peak with Viterbi, fits the curve and gates it. The scorer matches the normalised curve against each ADS-B candidate's predicted sin(elevation), with the unknown microphone height fitted as a scale. Details, maths and gates: [docs/broadband.md](docs/broadband.md). The method follows:
+**Broadband multipath delay (0.3.0, opt-in `--broadband`).** Jets often give no tonal line, but a microphone at height h above ground hears the direct sound plus a ground-reflected copy delayed by τ(t) ≈ 2·h·sin(elevation)/c (Lloyd's mirror). The log spectrum then has fringes spaced 1/τ, and the band-limited power cepstrum peaks at quefrency τ. For a straight level pass, τ(t) = τ_max/√(1+((t−t_c)/T)²) with T = S0/v (CPA slant range over speed). The detector tracks the cepstral peak with Viterbi, fits the curve and gates it. The scorer matches the normalised curve against each ADS-B candidate's predicted sin(elevation), with the unknown microphone height fitted as a scale. Details, maths and gates: [docs/broadband.md](docs/broadband.md). The method follows:
 - Lo & Ferguson, *Aircraft flight parameter estimation using acoustic multipath delays*, IEEE TAES 39(1), 2003, doi:10.1109/TAES.2003.1188908.
 - Ferguson & Lo / Quinn, *Flight parameter identification from cepstrum tracks*, IDC 2002, doi:10.1109/IDC.2002.995436.
 - Lo, Perry & Ferguson, *Aircraft flight parameter estimation using acoustical Lloyd's mirror effect*, IEEE TAES 38(1), 2002, doi:10.1109/7.993235.
@@ -232,7 +236,7 @@ The full pipeline (events → historical ADS-B → grid search) was evaluated on
 
 **Limitations:** on unseen clips the method mostly fails (1 of 14 held-out runs under 3 km, 6 with no events at all). An `ok` flag is not a guarantee: osh_0719 was the only held-out `ok` result, it was 13.2 km off, and its 95% area missed the truth. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With these small samples the numbers are indicative, not precise. Treat any output as a hypothesis to check, not as a location.
 
-### Broadband events (0.3.0-dev, `--det broadband=true`)
+### Broadband events (0.3.0, `--broadband`)
 
 Results at ±30 s on tune, with the code frozen at ff25280:
 - man_hg0903 (a 75-minute recording under the Manchester approach) went from 10.5 km to **0.19 km**, flagged ok.
@@ -240,7 +244,30 @@ Results at ±30 s on tune, with the code frozen at ff25280:
 - On the old tune clips: vny_0513 went from 15.4 to 2.95 km, ord from 15.2 to 5.9 km and jfk from 10.8 to 4.6 km. crq went from 1.16 to 1.55 km. The other old clips were unchanged.
 - Most field and livestream clips still give no broadband events: a clear fringe pattern is needed.
 
-**Held-out: pending.** The 18 held-out clips (5 original test, 9 livestream test2, 4 field-recording test6) are being run once with the frozen settings. Results will be added here and in PR #4 as they come in, whatever they show. Tune gains do not show that the method generalises.
+**Held-out (one frozen run at ff25280, `--det broadband=true`, ±30 s; dab_part1 ±9000 s).** 18 clips: 5 original test, 9 livestream test2, 4 field-recording test6. "Before" is the tonal-only 0.2.0 run (c5_heldout / c6_test); muc_ap82011 had no tonal-only run because its ADS-B day arrived later.
+
+| clip | split | before | after (broadband on) | truth in padded 95 % |
+|---|---|---|---|---|
+| dfw_iNsj | test2 | no events | **1.96 km**, low | yes |
+| lgb_0807 | test | 2.44 km, low | **2.38 km, ok** | yes |
+| dub_or3L | test2 | no events | 4.74 km, ok | yes |
+| lgw_1pyp | test2 | 5.14 km, low | 5.14 km, low | yes |
+| muc_ap82011 | test6 | — | 13.07 km, ok | **no** |
+| osh_0719 | test | 13.24 km, ok | 13.24 km, ok | **no** |
+| ads_0821b | test | 7.88 km, low | 17.24 km, low (regression) | yes |
+| dab_part1 | test | 17.87 km | 17.96 km, low | yes |
+| syd_DuZb | test2 | 11.01 km, low | 18.58 km, low (regression) | **no** |
+| atl_0IA3 | test2 | 18.61 km, low | 18.61 km, low | yes |
+| vny_0526 | test | 19.69 km, low | 19.69 km, low | yes |
+| sxm_4e38, dus_3afV, phx_L2dM, phx_rnu4 | test2 | no events | no events | — |
+| muc_ap81998, edi_ap82914, hag_ap83009 | test6 | no events | no events | — |
+
+| | runs | solved | error < 3 km | median error (solved) | truth in padded 95 % |
+|---|---|---|---|---|---|
+| Tonal only (0.2.0), 14 clips | 14 | 8 | 1 | 12.1 km | 6 / 8 |
+| **Broadband on (0.3.0), 18 clips** | 18 | 11 | **2** | **13.2 km** | 8 / 11 |
+
+Honest reading: broadband events add solved runs (dfw and dub went from no events to an answer) and one more run under 3 km, but the median of solved runs got slightly worse, and two clips regressed (ads_0821b 7.9 → 17.2 km, syd 11.0 → 18.6 km). Of the four `ok` results, lgb (2.4 km) and dub (4.7 km) are roughly right, while osh (13.2 km) and muc_ap82011 (13.1 km) are wrong, and their 95 % areas miss the truth. The field recordings at Edinburgh, The Hague and Munich north, and most livestreams, still give no events. On unseen clips the method still mostly fails.
 
 ![Before/after per clip](docs/screenshots/summary_broadband.png)
 
@@ -272,9 +299,8 @@ The tracker works on clean real tones. You still pick the frequency band and tim
 ## Limitations
 
 - Tonal detection needs propeller or engine lines. Broadband detection needs a clear ground-reflection fringe pattern (hard, flat ground; a close pass; the CPA inside the recording). Commentary-heavy, gated or high-passed livestream audio gives no events either way.
-- Generalisation is unproven: 1 of 14 tonal held-out runs was under 3 km (median 12.1 km for solved runs), and broadband held-out results are pending. `confidence: ok` is not a guarantee. With `low`, use the whole search area as the answer.
+- Generalisation is unproven: 1 of 14 tonal held-out runs was under 3 km (median 12.1 km for solved runs), and with broadband on, 2 of 18 (median 13.2 km). `confidence: ok` is not a guarantee. With `low`, use the whole search area as the answer.
 - One flyover leaves an along-track ambiguity, and a straight track a left/right mirror ambiguity. Turning flights fail the straight-pass broadband fit. Harmonics that cross confuse the manual `doppler_track.py`.
-- Broadband and scorer options are only reachable from Python or the eval harness, not the CLI or tools.
 - Needs a date, adsb.lol coverage for that day (some 2023–2024 releases have no data), a region of at most 60 km radius, and about 3 GB of download per uncached day.
 
 ## Privacy and ethics
@@ -289,9 +315,9 @@ python3 -m pytest tests -q        # network tests run only with DOPPLER_GEO_NETW
 ruff check . && ruff format --check .
 ```
 
-`tests/test_broadband.py` covers the synthetic broadband pass (geometry recovered for 1.5 m and 5 m mic heights), noise-only and steady-tone negatives, the scorer picking the true point, and tonal events ignoring jets.
+`tests/test_cli_flags.py` covers the `--broadband` / `--temper-extra` flags and tool parameters, and the offline error message. `tests/test_broadband.py` covers the synthetic broadband pass (geometry recovered for 1.5 m and 5 m mic heights), noise-only and steady-tone negatives, the scorer picking the true point, and tonal events ignoring jets.
 
-Screenshot from an early 0.2.0 run (21 tests). The suite now has 41 tests: 39 pass, 2 network tests skip.
+Screenshot from an early 0.2.0 run (21 tests). The suite now has 45 tests: 43 pass, 2 network tests skip.
 
 ![pytest output, early 0.2.0](docs/screenshots/v02-terminal-tests.png)
 

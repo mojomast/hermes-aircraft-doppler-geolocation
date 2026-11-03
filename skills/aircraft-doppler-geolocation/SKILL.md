@@ -28,22 +28,16 @@ broadband mode, a jet pass whose ground reflection makes a clear fringe pattern.
 
 ## Fast path (0.2.0+)
 
-1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass. The tools detect tonal events only; if the spectrogram shows broadband jet passes with ground-reflection fringes (evenly spaced bands that converge and widen around closest approach), try the broadband mode below, otherwise stop and say so.
+1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass. By default the tools detect tonal events only. If the spectrogram shows broadband jet passes with ground-reflection fringes (evenly spaced bands that converge and widen around closest approach), rerun with `broadband: true` (see below); otherwise stop and say so.
 2. `doppler_locate(recording, date_hint, region_hint="lat,lon,radius_km")`: needs a date (or file metadata) and a region. Returns best point, 68/95 % areas, matched aircraft, `heatmap.png`. If metadata contains GPS it is reported directly.
 3. Read `best.confidence` first. `ok` needs at least 2 events that consistently match an aircraft (`best.n_consistent_events`). With `low`, the report carries a `warning` and `credible_area_km2["95_low_conf"]` (the whole search disc): report the search region, not the point. Only with `ok` is `credible_area_km2["95"]` a usable 95 % region, and even then it is roughly calibrated (on held-out clips the only `ok` result was 13 km off).
 4. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.
 
-CLI equivalent: `python3 -m dopplergeo detect REC [--out DIR]` and `python3 -m dopplergeo locate REC --date D --region lat,lon,km [--time-tolerance S] [--offline] [--include-jets] [--out DIR]`. Cache: `~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`. Give an ISO start time with a small `--time-tolerance` (e.g. 30 s) whenever you know it; a date alone searches the whole UTC day.
+CLI equivalent: `python3 -m dopplergeo detect REC [--out DIR]` and `python3 -m dopplergeo locate REC --date D --region lat,lon,km [--time-tolerance S] [--offline] [--include-jets] [--broadband] [--temper-extra K] [--out DIR]`. Cache: `~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`. Give an ISO start time with a small `--time-tolerance` (e.g. 30 s) whenever you know it; a date alone searches the whole UTC day.
 
-## Broadband mode (0.3.0-dev, experimental)
+## Broadband mode (0.3.0, experimental)
 
-Jets often give no tonal line. `detect_events(x, sr, broadband=True)` also finds passes from the ground-reflection (Lloyd's mirror) multipath delay τ(t) = τ_max/√(1+((t−t_c)/T)²), T = S0/v, measured with a cepstrogram, Viterbi-tracked and gated (span ≥ 4 s, cepstral z ≥ 5, F-test vs constant, contrast ≥ 1.15, CPA inside, 0.8 ≤ T ≤ 150 s, rel rms ≤ 0.08). Broadband events have `kind="broadband"`, `tau_max_s`, `T_s`, and no speed or distance of their own. The scorer matches them to ADS-B jets as well as props. It is **not** exposed by the CLI or the tools yet: call it from Python with `terminal` (from the plugin checkout):
-
-```
-python3 -c "from dopplergeo import detect; x,sr=detect.load_audio('rec.wav'); ev,_=detect.detect_events(x,sr,broadband=True); print([e.to_dict() for e in ev])"
-```
-
-To locate with broadband events, use the eval harness (`scripts/eval_batch.py ... --det broadband=true`) on a one-clip manifest with cached ADS-B. On tune clips it fixed two Manchester field recordings (0.19 and 0.33 km); held-out results are pending, so present broadband-based fixes as experimental. Method and maths: `docs/broadband.md` in the plugin repo.
+Jets often give no tonal line. `detect_events(x, sr, broadband=True)` also finds passes from the ground-reflection (Lloyd's mirror) multipath delay τ(t) = τ_max/√(1+((t−t_c)/T)²), T = S0/v, measured with a cepstrogram, Viterbi-tracked and gated (span ≥ 4 s, cepstral z ≥ 5, F-test vs constant, contrast ≥ 1.15, CPA inside, 0.8 ≤ T ≤ 150 s, rel rms ≤ 0.08). Broadband events have `kind="broadband"`, `tau_max_s`, `T_s`, and no speed or distance of their own. The scorer matches them to ADS-B jets as well as props. Enable it with `broadband: true` on `doppler_detect` / `doppler_locate`, or `--broadband` on the CLI. Results: on tune it fixed two Manchester field recordings (0.19 and 0.33 km). On held-out (18 clips) it gave 2 runs under 3 km against 1 of 14 without it, and more solved runs, but a slightly worse median (13.2 km against 12.1) and two regressions. So run it when the tonal pass finds nothing, and present broadband-based fixes as experimental. `temper_extra` (default 4) widens or narrows the 68/95 % areas; do not lower it to make a result look sharper. Method and maths: `docs/broadband.md` in the plugin repo.
 
 ## When to Use
 

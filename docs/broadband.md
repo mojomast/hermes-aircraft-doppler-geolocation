@@ -1,6 +1,6 @@
 # Broadband (ground-reflection) events
 
-Status: 0.3.0-dev, opt-in (`detect_events(x, sr, broadband=True)`, or `--det broadband=true` in `scripts/eval_batch.py`). The CLI and the Hermes tools do not enable it yet. Code: `dopplergeo/broadband.py`, plus the broadband branch in `dopplergeo/score.py`.
+Status: 0.3.0, experimental and opt-in: `dopplergeo detect|locate --broadband`, `broadband: true` in the `doppler_detect` / `doppler_locate` tools, `detect_events(x, sr, broadband=True)` in Python, or `--det broadband=true` in `scripts/eval_batch.py`. Code: `dopplergeo/broadband.py`, plus the broadband branch in `dopplergeo/score.py`.
 
 ## Why
 
@@ -70,7 +70,7 @@ PY
 
 ## Results and caveats
 
-See the README ("Broadband events") and [evaluation.md](evaluation.md). On tune, two Manchester field recordings went from 10.5 km and no events to 0.19 km and 0.33 km. The held-out run is pending. The one gate change made after seeing real data was lowering T's floor from 2 s to 0.8 s and the span floor to 4 s, for very low passes in the AMS livestream, decided on tune only. Most clips still give no broadband events: the method needs hard ground, a close pass and a clear fringe pattern.
+See the README ("Broadband events") and [evaluation.md](evaluation.md). On tune, two Manchester field recordings went from 10.5 km and no events to 0.19 km and 0.33 km. On held-out (18 clips, one frozen run), 2 runs were under 3 km against 1 of 14 tonal-only, with 11 solved against 8. The median of solved runs went from 12.1 to 13.2 km, and ads_0821b and syd regressed; see [evaluation.md](evaluation.md). The one gate change made after seeing real data was lowering T's floor from 2 s to 0.8 s and the span floor to 4 s, for very low passes in the AMS livestream, decided on tune only. Most clips still give no broadband events: the method needs hard ground, a close pass and a clear fringe pattern.
 
 ## References
 

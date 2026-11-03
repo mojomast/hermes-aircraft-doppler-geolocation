@@ -29,7 +29,13 @@ def detect_tool(params, **_kwargs) -> str:
         args = _params(params)
         from .locate import detect_only
 
-        return _dump(detect_only(str(args["recording"]), args.get("out_dir") or None))
+        return _dump(
+            detect_only(
+                str(args["recording"]),
+                args.get("out_dir") or None,
+                broadband=bool(args.get("broadband", False)),
+            )
+        )
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         return _dump({"ok": False, "error": str(exc)})
 
@@ -47,6 +53,12 @@ def locate_tool(params, **_kwargs) -> str:
             out_dir=args.get("out_dir") or None,
             time_tolerance_s=float(args.get("time_tolerance_s", 600)),
             include_jets=bool(args.get("include_jets", False)),
+            broadband=bool(args.get("broadband", False)),
+            temper_extra=(
+                float(args["temper_extra"])
+                if args.get("temper_extra") is not None
+                else None
+            ),
         )
         return _dump(rep)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
@@ -70,6 +82,10 @@ def tool_specs() -> list[dict]:
         "type": "string",
         "description": "Directory for report.json and PNGs. Default: <recording>.doppler/",
     }
+    bb = {
+        "type": "boolean",
+        "description": "Also detect jet passes from the ground-reflection (Lloyd's mirror) delay. Experimental. Default false.",
+    }
     return [
         {
             "name": "doppler_detect",
@@ -79,7 +95,7 @@ def tool_specs() -> list[dict]:
                 "Scan a whole recording for aircraft flyover Doppler tones without hand-picked bands. "
                 "Returns events (closest-approach time, speed, slant distance, rest frequency, harmonics, F-test) "
                 "and writes detection.png. Local only, no network. Do not write a replacement detector.",
-                {"recording": rec, "out_dir": out},
+                {"recording": rec, "out_dir": out, "broadband": bb},
                 ["recording"],
             ),
             "handler": detect_tool,
@@ -110,6 +126,11 @@ def tool_specs() -> list[dict]:
                         "description": "Slack around an ISO datetime hint. Default 600.",
                     },
                     "include_jets": {"type": "boolean"},
+                    "broadband": bb,
+                    "temper_extra": {
+                        "type": "number",
+                        "description": "95% area calibration: extra posterior temper on top of the Birge ratio. Default 4.",
+                    },
                     "out_dir": out,
                 },
                 ["recording"],

@@ -558,6 +558,10 @@ def plot_detection(diag, events, path, title="", fmax=600):
                 "c-",
                 lw=0.9,
             )
+        if getattr(e, "kind", "tonal") == "broadband":
+            ax.axvspan(e.t_start, e.t_end, ymin=0.9, ymax=0.97, color="lime", alpha=0.6)
+            ax.text(e.t_cpa, fmax * 0.85, f"#{i + 1} bb", color="lime", fontsize=10)
+            continue
         ax.text(
             e.t_cpa,
             min(fmax * 0.95, e.f0_hz * max(e.harmonics) * 1.08),

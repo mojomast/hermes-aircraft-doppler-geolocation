@@ -61,6 +61,8 @@ def locate(
     out_dir=None,
     time_tolerance_s=600.0,
     include_jets=False,
+    broadband=False,
+    temper_extra=None,
     max_radius_km=60.0,
     tar_parts=None,
     tracks=None,
@@ -72,7 +74,9 @@ def locate(
     recording: audio/video path. date_hint: 'YYYY-MM-DD' (time unknown, the whole
     UTC day is searched) or an ISO datetime of the recording start (searched
     +/- time_tolerance_s). region_hint: 'lat,lon,radius_km' (required unless the
-    file carries GPS). offline: use only cached ADS-B/DEM/weather. tracks /
+    file carries GPS). offline: use only cached ADS-B/DEM/weather. broadband: also
+    detect ground-reflection (multipath-delay) jet passes. temper_extra: override
+    score.Options.temper_extra (95% area calibration, default 4). tracks /
     elevation_fn / tar_parts let tests and power users inject data.
     Returns a JSON-able dict; writes report.json and heatmap.png to out_dir.
     """
@@ -108,7 +112,7 @@ def locate(
     region = _parse_region(region_hint)
     x, sr = detect.load_audio(recording)
     clip_dur = len(x) / sr
-    events, diag = detect.detect_events(x, sr)
+    events, diag = detect.detect_events(x, sr, broadband=broadband)
     detect.plot_detection(
         diag,
         events,
@@ -143,7 +147,8 @@ def locate(
         return _finish(rep, out)
     lat0, lon0, rad_km = region
     rad_km = min(rad_km, max_radius_km)
-    opts = score.Options(include_jets=include_jets)
+    okw = {} if temper_extra is None else {"temper_extra": float(temper_extra)}
+    opts = score.Options(include_jets=include_jets, **okw)
     day_start = dt.datetime(day.year, day.month, day.day, tzinfo=dt.UTC).timestamp()
     if when is not None:
         t0w = (when.timestamp() - time_tolerance_s, when.timestamp() + time_tolerance_s)
@@ -175,7 +180,10 @@ def locate(
             except OfflineMiss as e:
                 rep["error"] = f"offline: {e}"
                 return _finish(rep, out)
-    planes = score.prepare_planes(tracks, lat0, lon0, include_jets=include_jets)
+    need_jets = include_jets or any(
+        getattr(e, "kind", "tonal") == "broadband" for e in events
+    )
+    planes = score.prepare_planes(tracks, lat0, lon0, include_jets=need_jets)
     rep["adsb"] = {
         "aircraft_in_crop": len(tracks),
         "tonal_track_segments": len(planes),
@@ -377,9 +385,9 @@ def plot_heatmap(res, planes, lat0, lon0, path, best=None, truth=None):
     plt.close(fig)
 
 
-def detect_only(recording, out_dir=None):
+def detect_only(recording, out_dir=None, broadband=False):
     x, sr = detect.load_audio(recording)
-    events, diag = detect.detect_events(x, sr)
+    events, diag = detect.detect_events(x, sr, broadband=broadband)
     out = Path(out_dir) if out_dir else Path(str(recording) + ".doppler")
     out.mkdir(parents=True, exist_ok=True)
     png = out / "detection.png"

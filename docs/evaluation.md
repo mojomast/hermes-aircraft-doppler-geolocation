@@ -39,7 +39,7 @@ Exclusions are recorded with reasons in the manifest. They were: diagnosed narra
 
 Confidence flag: on tune, the `ok` runs were right (< 3 km) 3 of 3 times. On held-out, the only `ok` run (osh_0719) was 13.2 km off.
 
-### Broadband events (0.3.0-dev, `--det broadband=true`, frozen at ff25280, ±30 s)
+### Broadband events (0.3.0, `--broadband` / `--det broadband=true`, frozen at ff25280, ±30 s)
 
 | clip | before (tonal only) | after |
 |---|---|---|
@@ -53,7 +53,30 @@ Confidence flag: on tune, the `ok` runs were right (< 3 km) 3 of 3 times. On hel
 | crq | 1.16 km, ok | 1.55 km, ok |
 | lgb_0810, vny_0605, ads_0821a, dab_0820a, dab_0820b, mia_7Nyj, bur_l4OP | — | unchanged |
 
-**Held-out (18 clips: 5 test, 9 test2, 4 test6): pending.** This is one frozen run (`runs/c7_heldout`), and it will be reported here as is. Until then, the broadband gains are tune-set evidence only.
+**Held-out (one frozen run at ff25280, `--det broadband=true`, ±30 s; dab_part1 ±9000 s).** 18 clips: 5 original test, 9 livestream test2, 4 field-recording test6. "Before" is the tonal-only 0.2.0 run (c5_heldout / c6_test); muc_ap82011 had no tonal-only run because its ADS-B day arrived later.
+
+| clip | split | before | after (broadband on) | truth in padded 95 % |
+|---|---|---|---|---|
+| dfw_iNsj | test2 | no events | **1.96 km**, low | yes |
+| lgb_0807 | test | 2.44 km, low | **2.38 km, ok** | yes |
+| dub_or3L | test2 | no events | 4.74 km, ok | yes |
+| lgw_1pyp | test2 | 5.14 km, low | 5.14 km, low | yes |
+| muc_ap82011 | test6 | — | 13.07 km, ok | **no** |
+| osh_0719 | test | 13.24 km, ok | 13.24 km, ok | **no** |
+| ads_0821b | test | 7.88 km, low | 17.24 km, low (regression) | yes |
+| dab_part1 | test | 17.87 km | 17.96 km, low | yes |
+| syd_DuZb | test2 | 11.01 km, low | 18.58 km, low (regression) | **no** |
+| atl_0IA3 | test2 | 18.61 km, low | 18.61 km, low | yes |
+| vny_0526 | test | 19.69 km, low | 19.69 km, low | yes |
+| sxm_4e38, dus_3afV, phx_L2dM, phx_rnu4 | test2 | no events | no events | — |
+| muc_ap81998, edi_ap82914, hag_ap83009 | test6 | no events | no events | — |
+
+| | runs | solved | error < 3 km | median error (solved) | truth in padded 95 % |
+|---|---|---|---|---|---|
+| Tonal only (0.2.0), 14 clips | 14 | 8 | 1 | 12.1 km | 6 / 8 |
+| **Broadband on (0.3.0), 18 clips** | 18 | 11 | **2** | **13.2 km** | 8 / 11 |
+
+Honest reading: broadband events add solved runs (dfw and dub went from no events to an answer) and one more run under 3 km, but the median of solved runs got slightly worse, and two clips regressed (ads_0821b 7.9 → 17.2 km, syd 11.0 → 18.6 km). Of the four `ok` results, lgb (2.4 km) and dub (4.7 km) are roughly right, while osh (13.2 km) and muc_ap82011 (13.1 km) are wrong, and their 95 % areas miss the truth. The field recordings at Edinburgh, The Hague and Munich north, and most livestreams, still give no events. On unseen clips the method still mostly fails.
 
 Noise-only control audio (600 s) gives 0 broadband events.
 
