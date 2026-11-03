@@ -99,3 +99,15 @@ def test_tonal_events_ignore_jets_unless_enabled():
         [ev], planes, np.zeros((1, 3)), 343.0, score.Options(), (-5, 5), 200
     )
     assert res.matches[0] in (None, [])
+
+
+def test_detrend_factored_matches_dense_projection():
+    """The factored polynomial detrend equals the old dense projection."""
+    rng = np.random.default_rng(3)
+    fb = np.linspace(150.0, 2000.0, 876)
+    u = (fb - fb.mean()) / (np.ptp(fb) / 2)
+    V = np.vander(u, 5)
+    L = rng.normal(size=(256, len(fb))) + 5 * u**2
+    dense = L - L @ (V @ np.linalg.pinv(V)).T
+    fact = L - (L @ np.linalg.pinv(V).T) @ V.T
+    assert np.max(np.abs(dense - fact)) < 1e-12

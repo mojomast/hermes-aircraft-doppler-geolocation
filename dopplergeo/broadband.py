@@ -52,7 +52,10 @@ def cepstrogram(
     # remove slow spectral trend (source spectrum) with a low-order polynomial
     u = (fb - fb.mean()) / (np.ptp(fb) / 2)
     V = np.vander(u, 5)
-    proj = V @ np.linalg.pinv(V)
+    # least-squares polynomial residual L - L V pinv(V)^T, applied through the
+    # (nf, 5) factors instead of a dense (nf, nf) projection matrix
+    pinv_t = np.linalg.pinv(V).T
+    VT = np.ascontiguousarray(V.T)
     Z = np.empty((len(idx), len(q)), np.float32)
     lev = np.empty(len(idx))
     for i0 in range(0, len(idx), 256):
@@ -61,7 +64,7 @@ def cepstrogram(
         P = np.abs(np.fft.rfft(fr, axis=1))[:, band] ** 2 + 1e-12
         L = np.log(P)
         lev[i0 : i0 + len(blk)] = 10 * np.log10(P.mean(1))
-        L = L - L @ proj.T
+        L -= (L @ pinv_t) @ VT
         C = L @ basis / len(fb)
         med = np.median(C, axis=1, keepdims=True)
         mad = np.median(np.abs(C - med), axis=1, keepdims=True) * 1.4826 + 1e-12
