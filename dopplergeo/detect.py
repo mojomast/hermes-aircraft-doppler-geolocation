@@ -84,14 +84,23 @@ class Event:
         return d
 
 
-def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+def log_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+    """(f, t, L): dB spectrogram between 20 Hz and fmax."""
     nper = int(sr * win_s)
     hop = max(1, int(sr * hop_s))
     f, t, S = signal.spectrogram(
         x, sr, nperseg=nper, noverlap=nper - hop, window="hann", detrend="constant"
     )
     keep = (f >= 20) & (f <= fmax)
-    f, L = f[keep], 10 * np.log10(S[keep] + 1e-20)
+    return f[keep], t, 10 * np.log10(S[keep] + 1e-20)
+
+
+# detect_events() STFT settings (also used to redraw a cached detection plot)
+HOP_S, WIN_S = 0.25, 1.0
+
+
+def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+    f, t, L = log_spectrogram(x, sr, win_s, hop_s, fmax)
     df = f[1] - f[0]
     # remove the smooth spectral envelope (wind, roar, traffic) with a running median across frequency
     k = max(3, int(round(12.0 / df)) | 1)
@@ -447,7 +456,7 @@ def detect_events(
     without tonal lines (see broadband.py); tonal events take precedence when both
     cover the same pass.
     """
-    hop_s, win_s = 0.25, 1.0
+    hop_s, win_s = HOP_S, WIN_S
     f, t, Z, L = whitened_spectrogram(x, sr, win_s, hop_s, fmax)
     f0_grid = np.arange(f0_min, f0_max, 0.5)
     HS, _ = harmonic_sum(f, Z, f0_grid, kmax, fmax)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import adsb, detect, env, metadata, score
+from . import adsb, detect, env, evcache, metadata, score
 from .cache import OfflineMiss
 from .physics import C_DEFAULT
 
@@ -53,6 +53,54 @@ def days_spanned(t_a: float, t_b: float) -> list[dt.date]:
     return out
 
 
+def detect_cached(recording, broadband=False, cache=True, plots=True):
+    """Events for a recording, reusing the content-addressed event cache.
+
+    Returns (events, rejected, duration_s, diag_or_None, info). diag holds what
+    plot_detection needs (recomputed cheaply from the audio on a cache hit, and
+    only if plots=True). info = {"hit": bool, "key": str | None}.
+    """
+    det_kw = {"broadband": bool(broadband)}
+    key = material = hit = None
+    if cache:
+        key, material = evcache.make_key(
+            evcache.file_sha256(recording), detect.SR, det_kw
+        )
+        hit = evcache.load(key, material)
+    diag = None
+    if hit is not None:
+        events = [detect.Event(**e) for e in hit["events"]]
+        rejected, dur = hit["rejected"], float(hit["duration_s"])
+        if plots:
+            x, sr = detect.load_audio(recording)
+            diag = {
+                "spectrogram": detect.log_spectrogram(
+                    x, sr, detect.WIN_S, detect.HOP_S, 1000.0
+                ),
+                "rejected": rejected,
+            }
+            del x
+    else:
+        x, sr = detect.load_audio(recording)
+        dur = len(x) / sr
+        events, diag = detect.detect_events(x, sr, **det_kw)
+        del x  # the waveform is not needed past detection
+        rejected = diag["rejected"]
+        if cache:
+            evcache.store(
+                key,
+                material,
+                {
+                    "events": [e.to_dict(series=True) for e in events],
+                    "rejected": _jsonable(rejected),
+                    "duration_s": dur,
+                },
+            )
+        if not plots:
+            diag = None
+    return events, rejected, dur, diag, {"hit": hit is not None, "key": key}
+
+
 def locate(
     recording,
     date_hint=None,
@@ -68,6 +116,8 @@ def locate(
     tracks=None,
     elevation_fn=None,
     progress=None,
+    plots=True,
+    cache=True,
 ):
     """Locate a recording from flyover Doppler events and ADS-B.
 
@@ -110,33 +160,14 @@ def locate(
             f"No recording time. Using the upload date {day} (UTC day); the recording may be older. Pass date_hint to search another day."
         )
     region = _parse_region(region_hint)
-    x, sr = detect.load_audio(recording)
-    clip_dur = len(x) / sr
-    events, diag = detect.detect_events(x, sr, broadband=broadband)
-    detect.plot_detection(
-        diag,
-        events,
-        str(out / "detection.png"),
-        f"{Path(recording).name}: {len(events)} event(s)",
-    )
-    aircraft_events = [e for e in events if not e.likely_ground_vehicle]
-    if len(aircraft_events) < len(events):
-        notes.append(
-            f"{len(events) - len(aircraft_events)} slow event(s) (< 35 m/s) set aside as likely road vehicles."
-        )
     rep = {
         "ok": False,
         "recording": str(recording),
-        "duration_s": clip_dur,
-        "events": [e.to_dict() for e in events],
-        "rejected_segments": diag["rejected"],
         "metadata": _jsonable(meta),
         "notes": notes,
-        "files": {"detection_png": str(out / "detection.png")},
+        "files": {},
     }
-    if not aircraft_events:
-        rep["error"] = "no aircraft Doppler events detected"
-        return _finish(rep, out)
+    # cheap input checks first: detection is the expensive part
     if region is None:
         rep["error"] = (
             "region_hint (lat,lon,radius_km) is required: a wider search is not supported"
@@ -144,6 +175,32 @@ def locate(
         return _finish(rep, out)
     if day is None:
         rep["error"] = "date_hint is required (no creation time or upload date found)"
+        return _finish(rep, out)
+    events, rejected, clip_dur, diag, cinfo = detect_cached(
+        recording, broadband=broadband, cache=cache, plots=plots
+    )
+    if plots:
+        detect.plot_detection(
+            diag,
+            events,
+            str(out / "detection.png"),
+            f"{Path(recording).name}: {len(events)} event(s)",
+        )
+        rep["files"]["detection_png"] = str(out / "detection.png")
+    del diag
+    aircraft_events = [e for e in events if not e.likely_ground_vehicle]
+    if len(aircraft_events) < len(events):
+        notes.append(
+            f"{len(events) - len(aircraft_events)} slow event(s) (< 35 m/s) set aside as likely road vehicles."
+        )
+    rep.update(
+        duration_s=clip_dur,
+        events=[e.to_dict() for e in events],
+        rejected_segments=rejected,
+        detection_cache={"hit": cinfo["hit"]},
+    )
+    if not aircraft_events:
+        rep["error"] = "no aircraft Doppler events detected"
         return _finish(rep, out)
     lat0, lon0, rad_km = region
     rad_km = min(rad_km, max_radius_km)
@@ -267,8 +324,9 @@ def locate(
             "as the answer"
         )
         rep["credible_area_km2"]["95_low_conf"] = float(np.pi * rad_km**2)
-    rep["files"]["heatmap_png"] = str(out / "heatmap.png")
-    plot_heatmap(res, planes, lat0, lon0, str(out / "heatmap.png"), best)
+    if plots:
+        rep["files"]["heatmap_png"] = str(out / "heatmap.png")
+        plot_heatmap(res, planes, lat0, lon0, str(out / "heatmap.png"), best)
     return _finish(rep, out)
 
 
@@ -385,24 +443,29 @@ def plot_heatmap(res, planes, lat0, lon0, path, best=None, truth=None):
     plt.close(fig)
 
 
-def detect_only(recording, out_dir=None, broadband=False):
-    x, sr = detect.load_audio(recording)
-    events, diag = detect.detect_events(x, sr, broadband=broadband)
+def detect_only(recording, out_dir=None, broadband=False, plots=True, cache=True):
+    events, rejected, dur, diag, cinfo = detect_cached(
+        recording, broadband=broadband, cache=cache, plots=plots
+    )
     out = Path(out_dir) if out_dir else Path(str(recording) + ".doppler")
     out.mkdir(parents=True, exist_ok=True)
-    png = out / "detection.png"
-    detect.plot_detection(
-        diag, events, str(png), f"{Path(recording).name}: {len(events)} event(s)"
-    )
+    files = {}
+    if plots:
+        png = out / "detection.png"
+        detect.plot_detection(
+            diag, events, str(png), f"{Path(recording).name}: {len(events)} event(s)"
+        )
+        files["detection_png"] = str(png)
     rep = {
         "recording": str(recording),
-        "duration_s": len(x) / sr,
+        "duration_s": dur,
         "events": [e.to_dict() for e in events],
-        "rejected_segments": diag["rejected"],
-        "files": {"detection_png": str(png)},
+        "rejected_segments": rejected,
+        "detection_cache": {"hit": cinfo["hit"]},
+        "files": files,
     }
-    (out / "detect.json").write_text(json.dumps(rep, indent=2))
+    (out / "detect.json").write_text(json.dumps(_jsonable(rep), indent=2))
     return rep
 
 
-__all__ = ["C_DEFAULT", "detect_only", "locate"]
+__all__ = ["C_DEFAULT", "detect_cached", "detect_only", "locate"]

@@ -34,6 +34,8 @@ def detect_tool(params, **_kwargs) -> str:
                 str(args["recording"]),
                 args.get("out_dir") or None,
                 broadband=bool(args.get("broadband", False)),
+                plots=bool(args.get("plots", True)),
+                cache=bool(args.get("cache", True)),
             )
         )
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
@@ -59,6 +61,8 @@ def locate_tool(params, **_kwargs) -> str:
                 if args.get("temper_extra") is not None
                 else None
             ),
+            plots=bool(args.get("plots", True)),
+            cache=bool(args.get("cache", True)),
         )
         return _dump(rep)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
@@ -86,6 +90,14 @@ def tool_specs() -> list[dict]:
         "type": "boolean",
         "description": "Also detect jet passes from the ground-reflection (Lloyd's mirror) delay. Experimental. Default false.",
     }
+    plots = {
+        "type": "boolean",
+        "description": "Write diagnostic PNGs (detection.png, heatmap.png). Default true.",
+    }
+    cache = {
+        "type": "boolean",
+        "description": "Reuse cached events for the same audio content and detector settings. Default true.",
+    }
     return [
         {
             "name": "doppler_detect",
@@ -95,7 +107,13 @@ def tool_specs() -> list[dict]:
                 "Scan a whole recording for aircraft flyover Doppler tones without hand-picked bands. "
                 "Returns events (closest-approach time, speed, slant distance, rest frequency, harmonics, F-test) "
                 "and writes detection.png. Local only, no network. Do not write a replacement detector.",
-                {"recording": rec, "out_dir": out, "broadband": bb},
+                {
+                    "recording": rec,
+                    "out_dir": out,
+                    "broadband": bb,
+                    "plots": plots,
+                    "cache": cache,
+                },
                 ["recording"],
             ),
             "handler": detect_tool,
@@ -132,6 +150,8 @@ def tool_specs() -> list[dict]:
                         "description": "95% area calibration: extra posterior temper on top of the Birge ratio. Default 4.",
                     },
                     "out_dir": out,
+                    "plots": plots,
+                    "cache": cache,
                 },
                 ["recording"],
             ),
