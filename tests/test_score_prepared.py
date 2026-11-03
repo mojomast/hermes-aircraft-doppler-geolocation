@@ -141,3 +141,18 @@ def test_score_points_identical_broadband():
     a = ref.score_points(ev, po, g, 343.0, ref.Options(), (-5, 5), 200)
     b = score.score_points(ev, pn, g, 343.0, score.Options(), (-5, 5), 200)
     _same_result(a, b)
+
+
+def test_row_nanmedian_matches_numpy():
+    import warnings
+
+    rng = np.random.default_rng(5)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for n in (1, 2, 3, 10, 599, 600, 601, 1500):
+            for frac in (0.0, 0.3, 0.9, 1.0):
+                a = 1 + rng.normal(0, 0.01, (25, n))
+                a[rng.random(a.shape) < frac] = np.nan
+                np.testing.assert_array_equal(
+                    score._row_nanmedian(a), np.nanmedian(a, axis=1)
+                )

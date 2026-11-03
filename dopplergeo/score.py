@@ -299,9 +299,7 @@ def _loglik_from_pred(pe, D, T0s, opts: Options):
     oz = np.where(valid, obs[None, :], 0.0)
     # robust scale (unknown rest frequency): median start, then two inlier refits
     with np.errstate(invalid="ignore", divide="ignore"):
-        s = np.nanmedian(
-            np.where(valid, oz / np.where(Dz == 0, np.nan, Dz), np.nan), axis=1
-        )
+        s = _row_nanmedian(np.where(valid, oz / np.where(Dz == 0, np.nan, Dz), np.nan))
     s = np.nan_to_num(s, nan=1.0)
     for _ in range(2):
         w = valid & (np.abs(oz - s[:, None] * Dz) < 3 * sigma)
@@ -325,6 +323,18 @@ def _loglik_from_pred(pe, D, T0s, opts: Options):
     ll[hit_bound] = -np.inf  # scale outside the plausible range: not this aircraft
     j = int(np.argmax(ll))
     return float(ll[j]), float(T0s[j]), float(s[j])
+
+
+def _row_nanmedian(a):
+    """np.nanmedian(a, axis=1) for 2-D a, without the masked-array path (same values)."""
+    srt = np.sort(a, axis=1)  # NaNs sort last
+    nv = np.count_nonzero(~np.isnan(a), axis=1)
+    r = np.arange(a.shape[0])
+    lo = srt[r, np.maximum((nv - 1) // 2, 0)]
+    hi = srt[r, np.minimum(nv // 2, a.shape[1] - 1)]
+    out = np.where(nv % 2 == 1, lo, (lo + hi) / 2)
+    out[nv == 0] = np.nan
+    return out
 
 
 class _PrepEvent:
