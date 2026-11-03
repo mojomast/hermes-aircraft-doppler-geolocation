@@ -29,6 +29,11 @@ class Plane:
     tau: np.ndarray  # 1 s samples, unix time
     pos: np.ndarray  # (n, 3) ENU metres (z = altitude MSL)
     label: str = ""
+    # cached kinematics (see _kin): full-track np.gradient velocity and one-sided
+    # forward differences, so per-slice velocities need no new gradient call
+    _vel: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _fwd: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _uniform: bool | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -140,33 +145,88 @@ def prepare_planes(
     return out
 
 
+def _kin(pl: Plane):
+    """Cache full-track velocity / forward differences. Returns True if usable.
+
+    np.gradient on a slice [lo, hi) equals the full-track gradient at interior
+    samples and the one-sided forward difference at the slice ends, provided the
+    sample spacing is uniform (np.gradient switches formula on uniformity, so a
+    non-uniform track falls back to per-slice np.gradient).
+    """
+    if pl._uniform is None:
+        dtau = np.diff(pl.tau)
+        pl._uniform = bool(len(dtau) >= 1 and np.all(dtau == dtau[0]))
+        if pl._uniform:
+            pl._fwd = np.diff(pl.pos, axis=0) / dtau[:, None]
+            pl._vel = np.gradient(pl.pos, pl.tau, axis=0) if len(pl.tau) >= 2 else None
+    return pl._uniform
+
+
+def _slice_vel(pl: Plane, lo: int, hi: int):
+    """Exactly np.gradient(pl.pos[lo:hi], pl.tau[lo:hi], axis=0)."""
+    if hi - lo < 2 or not _kin(pl):
+        return np.gradient(pl.pos[lo:hi], pl.tau[lo:hi], axis=0)
+    v = pl._vel[lo:hi].copy()
+    v[0] = pl._fwd[lo]
+    v[-1] = pl._fwd[hi - 2]
+    return v
+
+
 def find_passes(planes, gxyz, opts: Options, c: float):
     """For every (point, plane) list local minima of slant range below r_max.
 
     Returns a list per point of passes: (plane_idx, k_min, r_min, t_recv_cpa).
+    Only track samples inside the chunk's bounding box grown by r_max (plus one
+    neighbour each side for the minimum test) are evaluated: any other sample is
+    farther than r_max horizontally, so it can never be a pass.
     """
     passes = [[] for _ in range(len(gxyz))]
     tree = cKDTree(gxyz[:, :2])
+    rmax = opts.r_max_m
     for pi, pl in enumerate(planes):
         # candidate points within r_max horizontally of any track sample
         near = set()
-        for idx in tree.query_ball_point(pl.pos[::5, :2], opts.r_max_m):
+        for idx in tree.query_ball_point(pl.pos[::5, :2], rmax):
             near.update(idx)
         if not near:
             continue
-        P = np.fromiter(near, int)
-        # bound the (points x samples x 3) temporary to ~100 MB
-        per = max(1, int(4e6 // max(len(pl.pos), 1)))
+        P = np.sort(np.fromiter(near, int))
+        n = len(pl.pos)
+        px, py, pz = pl.pos[:, 0], pl.pos[:, 1], pl.pos[:, 2]
+        per = max(1, int(4e6 // max(n, 1)))
         for chunk in np.array_split(P, max(1, -(-len(P) // per))):
-            r = np.linalg.norm(pl.pos[None, :, :] - gxyz[chunk, None, :], axis=2)
-            dr = np.diff(r, axis=1)
-            is_min = np.zeros_like(r, bool)
-            is_min[:, 1:-1] = (dr[:, :-1] < 0) & (dr[:, 1:] >= 0)
-            is_min[:, 0] = dr[:, 0] >= 0
-            is_min[:, -1] = dr[:, -1] < 0
-            is_min &= r < opts.r_max_m
-            for row, k in zip(*np.nonzero(is_min)):
-                rm = r[row, k]
+            g = gxyz[chunk]
+            m = (
+                (px >= g[:, 0].min() - rmax)
+                & (px <= g[:, 0].max() + rmax)
+                & (py >= g[:, 1].min() - rmax)
+                & (py <= g[:, 1].max() + rmax)
+            )
+            km = np.nonzero(m)[0]
+            if len(km) == 0:
+                continue
+            md = m.copy()
+            md[1:] |= m[:-1]
+            md[:-1] |= m[1:]
+            ks = np.nonzero(md)[0]
+            dx = px[ks][None, :] - g[:, 0:1]
+            r = dx * dx
+            dx = py[ks][None, :] - g[:, 1:2]
+            r += dx * dx
+            dx = pz[ks][None, :] - g[:, 2:3]
+            r += dx * dx
+            del dx
+            np.sqrt(r, out=r)
+            jm = np.searchsorted(ks, km)
+            rk = r[:, jm]
+            left = np.where(km > 0, jm - 1, jm)
+            right = np.where(km < n - 1, jm + 1, jm)
+            is_min = ((rk - r[:, left]) < 0) | (km == 0)[None, :]
+            is_min &= ((r[:, right] - rk) >= 0) | (km == n - 1)[None, :]
+            is_min &= rk < rmax
+            for row, j in zip(*np.nonzero(is_min)):
+                rm = rk[row, j]
+                k = km[j]
                 passes[chunk[row]].append(
                     (pi, int(k), float(rm), float(pl.tau[k] + rm / c))
                 )
@@ -182,7 +242,7 @@ def predicted_ratio(pl: Plane, g, t_abs, c, k_cpa, half_window_s):
     pos = pl.pos[lo:hi]
     d = pos - g
     r = np.linalg.norm(d, axis=1)
-    vel = np.gradient(pos, pl.tau[lo:hi], axis=0)
+    vel = _slice_vel(pl, lo, hi)
     vr = -np.sum(d * vel, axis=1) / np.maximum(r, 1.0)
     trecv = pl.tau[lo:hi] + r / c
     D = c / (c - vr)
@@ -337,7 +397,7 @@ def _pass_span(pl, g, k, half, c):
     d = pos - g
     r = np.linalg.norm(d, axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        vel = np.gradient(pos, pl.tau[lo:hi], axis=0)
+        vel = _slice_vel(pl, lo, hi)
         vr = -np.sum(d * vel, axis=1) / np.maximum(r, 1.0)
         D = c / (c - vr)
     D = D[np.isfinite(D) & (D > 0)]
