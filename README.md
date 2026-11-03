@@ -122,6 +122,18 @@ The full pipeline (events → historical ADS-B → grid search) was evaluated on
 
 **Limitations:** on unseen clips the method mostly fails (1 of 14 held-out runs under 3 km, 6 with no events at all). An `ok` flag is not a guarantee: osh_0719 was the only held-out `ok` result, it was 13.2 km off, and its 95% area missed the truth. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With these small samples the numbers are indicative, not precise. Treat any output as a hypothesis to check, not as a location.
 
+## Broadband (ground-reflection) events (feat/broadband, experimental)
+
+`detect_events(..., broadband=True)` (eval: `--det broadband=true`) also detects jet passes that have no tonal lines. It uses the Lloyd's-mirror multipath delay τ(t) ≈ 2·h·sin(elevation)/c between the direct sound and the ground-reflected sound. The delay is measured with a band-limited cepstrum, tracked with Viterbi, and fitted to the straight-pass curve τ_max/√(1+((t−t_c)/T)²), where T is the CPA slant range divided by speed. The method follows Lo & Ferguson, IEEE TAES 39(1) 2003. The scorer matches the normalised curve to each ADS-B candidate's predicted sin(elevation), and the unknown microphone height is fitted as a scale. Tonal gates are unchanged.
+
+Results at ±30 s on tune:
+- man_hg0903 (a 75-minute recording under the Manchester approach) went from 10.5 km to **0.19 km**, flagged ok.
+- man_hg0909 went from no events to **0.33 km**, flagged ok.
+- On the old tune clips: vny_0513 went from 15.4 to 2.95 km, ord from 15.2 to 5.9 km and jfk from 10.8 to 4.6 km. crq went from 1.16 to 1.55 km. The other old clips were unchanged.
+- Most field and livestream clips still give no broadband events: a clear fringe pattern is needed. Held-out results: see PR #4 (one frozen run, in progress).
+
+![Before/after per clip](docs/screenshots/summary_broadband.png)
+
 ## Real-world test (v0.1.1)
 
 Run on 5 public YouTube clips (audio only), 2026-11-02:
