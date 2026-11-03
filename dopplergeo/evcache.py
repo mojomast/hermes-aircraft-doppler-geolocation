@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -84,8 +85,9 @@ def load(key: str, material: dict):
         return None
     try:
         d = json.loads(raw)
-        if d.get("key_material") != material or not isinstance(d.get("events"), list):
+        if d.get("key_material") != material:
             raise ValueError("mismatched entry")
+        validate_payload(d)
     except (ValueError, TypeError, AttributeError):
         try:
             p.unlink()
@@ -97,6 +99,71 @@ def load(key: str, material: dict):
     except OSError:
         pass
     return d
+
+
+_FINITE = ("t_start", "t_end", "t_cpa", "rms_resid_hz", "sigma_ratio")
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def validate_payload(d) -> None:
+    """Raise ValueError unless d is a complete, well-formed cache payload."""
+    import dataclasses
+
+    from .detect import Event
+
+    if not isinstance(d, dict):
+        raise ValueError("payload is not an object")
+    dur = d.get("duration_s")
+    if not _num(dur) or not math.isfinite(dur) or dur <= 0:
+        raise ValueError("invalid duration_s")
+    rej = d.get("rejected")
+    if not isinstance(rej, list) or not all(
+        isinstance(r, dict)
+        and _num(r.get("t_start"))
+        and _num(r.get("t_end"))
+        and isinstance(r.get("why"), str)
+        for r in rej
+    ):
+        raise ValueError("invalid rejected list")
+    evs = d.get("events")
+    if not isinstance(evs, list):
+        raise ValueError("invalid events list")
+    names = {f.name: f for f in dataclasses.fields(Event)}
+    for e in evs:
+        if not isinstance(e, dict) or set(e) != set(names):
+            raise ValueError("event fields mismatch")
+        for k in _FINITE:
+            if not _num(e[k]) or not math.isfinite(e[k]):
+                raise ValueError(f"event {k} not finite")
+        for k in (
+            "f0_hz",
+            "speed_mps",
+            "cpa_slant_m",
+            "snr_z",
+            "f_test",
+            "p_value",
+            "tau_max_s",
+            "T_s",
+        ):
+            if not _num(e[k]):
+                raise ValueError(f"event {k} not a number")
+        for k in ("straight_fit_ok", "likely_ground_vehicle"):
+            if not isinstance(e[k], bool):
+                raise ValueError(f"event {k} not bool")
+        if e["kind"] not in ("tonal", "broadband"):
+            raise ValueError("event kind")
+        t, r, h = e["times"], e["ratio"], e["harmonics"]
+        if not (isinstance(t, list) and isinstance(r, list) and len(t) == len(r) >= 2):
+            raise ValueError("event series")
+        if not all(_num(v) and math.isfinite(v) for v in t + r):
+            raise ValueError("event series not finite")
+        if not isinstance(h, list) or not all(_num(v) for v in h):
+            raise ValueError("event harmonics")
+        if not e["t_start"] <= e["t_end"] <= dur + 1.0:
+            raise ValueError("event outside clip")
 
 
 def store(key: str, material: dict, payload: dict) -> None:

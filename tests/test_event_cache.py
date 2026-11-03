@@ -130,3 +130,56 @@ def test_missing_inputs_fail_before_audio_is_read(wav, monkeypatch, tmp_path):
     assert "region_hint" in rep["error"]
     rep = locate.locate(str(wav), None, "43.8,-79.3,8", out_dir=str(tmp_path / "o"))
     assert "date_hint" in rep["error"]
+
+
+def _entry_file():
+    (f,) = evcache._dir().glob("*.json")
+    return f
+
+
+def _corrupt_and_expect_recompute(wav, counter, mutate):
+    locate.detect_cached(str(wav), plots=False)
+    n = counter["n"]
+    f = _entry_file()
+    d = json.loads(f.read_text())
+    mutate(d)
+    f.write_text(json.dumps(d))
+    ev, _rej, dur, _d, info = locate.detect_cached(str(wav), plots=False)
+    assert not info["hit"] and counter["n"] == n + 1 and ev and dur > 0
+    assert locate.detect_cached(str(wav), plots=False)[-1]["hit"]  # rewritten
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d.pop("rejected"),
+        lambda d: (d.update(events=[]), d.pop("rejected")),  # review repro
+        lambda d: d.pop("duration_s"),
+        lambda d: d.update(duration_s=-1),
+        lambda d: d.update(duration_s=float("nan")),
+        lambda d: d.update(duration_s="200"),
+        lambda d: d.update(rejected=[{"t_start": 1}]),
+        lambda d: d.update(events={"0": 1}),
+        lambda d: d["events"][0].pop("t_cpa"),
+        lambda d: d["events"][0].update(extra=1),
+        lambda d: d["events"][0].update(t_cpa="x"),
+        lambda d: d["events"][0].update(t_cpa=float("inf")),
+        lambda d: d["events"][0].update(times=[1.0], ratio=[1.0]),
+        lambda d: d["events"][0].update(ratio=d["events"][0]["ratio"][:-1]),
+        lambda d: d["events"][0].update(kind="other"),
+        lambda d: d["events"][0].update(straight_fit_ok=1),
+        lambda d: d["events"][0].update(t_end=1e6),
+        lambda d: d.update(events=[1]),
+    ],
+)
+def test_malformed_entry_is_recomputed(wav, counter, mutate):
+    _corrupt_and_expect_recompute(wav, counter, mutate)
+
+
+def test_truncated_and_non_object_json_recomputed(wav, counter):
+    locate.detect_cached(str(wav), plots=False)
+    f = _entry_file()
+    for bad in (f.read_bytes()[:-7], b"[]", b"null", b""):
+        f.write_bytes(bad)
+        assert not locate.detect_cached(str(wav), plots=False)[-1]["hit"]
+    assert counter["n"] == 5
