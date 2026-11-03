@@ -277,21 +277,22 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
 
     Returns (logl, T0, scale). T0 = recording start (unix) implied by the alignment.
     """
-    times = np.asarray(ev.times)
-    obs = np.asarray(ev.ratio)
+    pe = _PrepEvent.of(ev, opts)
     if t0_center is None:
         t0_center = t_cpa_recv - ev.t_cpa
-    shifts = np.arange(-opts.dt_tol_s, opts.dt_tol_s + 1e-9, opts.dt_step_s)
-    T0s = t0_center + shifts
-    t_abs = T0s[:, None] + times[None, :]
-    half = (times.max() - times.min()) / 2 + opts.dt_tol_s + 60
-    bb = is_broadband(ev)
-    pred = predicted_sin_elev if bb else predicted_ratio
-    bounds = opts.bb_scale_bounds if bb else opts.scale_bounds
-    D = pred(pl, g, t_abs, c, k_cpa, half)
+    T0s, t_abs = pe.t_abs(t0_center)
+    pred = predicted_sin_elev if pe.bb else predicted_ratio
+    D = pred(pl, g, t_abs, c, k_cpa, pe.half_pred)
+    return _loglik_from_pred(pe, D, T0s, opts)
+
+
+def _loglik_from_pred(pe, D, T0s, opts: Options):
+    """Scale fit + robust Gaussian log-likelihood of predicted series D (shifts x n)."""
     if D is None:
         return -np.inf, None, None
-    sigma = event_sigma(ev, opts)
+    obs = pe.obs
+    sigma = pe.sigma
+    bounds = opts.bb_scale_bounds if pe.bb else opts.scale_bounds
     valid = ~np.isnan(D)
     frac = valid.mean(axis=1)
     Dz = np.where(valid, D, 0.0)
@@ -316,14 +317,112 @@ def event_pass_loglik(ev, pl, g, k_cpa, t_cpa_recv, c, opts: Options, t0_center=
     rss = (res**2).sum(1)
     n = valid.sum(1)
     # samples outside the modelled span count as full outliers
-    rss = rss + (len(times) - n) * (4 * sigma) ** 2
-    ll = -0.5 * rss / sigma**2 * event_weight(ev, opts)
-    if not bb:  # broadband scale (1/sin elevation at CPA) is log-uniform
+    rss = rss + (pe.n - n) * (4 * sigma) ** 2
+    ll = -0.5 * rss / sigma**2 * pe.weight
+    if not pe.bb:  # broadband scale (1/sin elevation at CPA) is log-uniform
         ll -= 0.5 * ((s - 1.0) / opts.scale_prior_sd) ** 2
     ll[frac < 0.5] = -np.inf
     ll[hit_bound] = -np.inf  # scale outside the plausible range: not this aircraft
     j = int(np.argmax(ll))
     return float(ll[j]), float(T0s[j]), float(s[j])
+
+
+class _PrepEvent:
+    """Event arrays and statistics computed once; option-dependent values per level."""
+
+    def __init__(self, ev, base=None):
+        if base is not None:  # share the option-free arrays
+            self.__dict__.update(base.__dict__)
+            return
+        self.ev = ev
+        self.bb = is_broadband(ev)
+        self.times = np.asarray(ev.times)
+        self.obs = np.asarray(ev.ratio)
+        self.n = len(ev.times)
+        self.t_cpa = ev.t_cpa
+        self.span_tm = (self.times.max() - self.times.min()) if self.n else 0.0
+        self.half_span = (ev.times[-1] - ev.times[0]) / 2 if self.n else 0.0
+        self.obs_span = _obs_span(ev)
+
+    def with_opts(self, opts: Options):
+        pe = _PrepEvent(self.ev, base=self)
+        pe.opts = opts
+        pe.shifts = np.arange(-opts.dt_tol_s, opts.dt_tol_s + 1e-9, opts.dt_step_s)
+        pe.half_pred = pe.span_tm / 2 + opts.dt_tol_s + 60
+        pe.half_pf = pe.half_span + opts.dt_tol_s
+        pe.sigma = event_sigma(pe.ev, opts)
+        pe.weight = event_weight(pe.ev, opts)
+        pe.miss = miss_cost(pe.ev, opts)
+        pe.chi2_den = pe.weight * pe.n
+        return pe
+
+    @classmethod
+    def of(cls, ev, opts):
+        return cls(ev).with_opts(opts)
+
+    def t_abs(self, t0_center):
+        T0s = t0_center + self.shifts
+        return T0s, T0s[:, None] + self.times[None, :]
+
+
+class _PassGeom:
+    """Geometry of one pass seen from one point over the widest slice any event needs.
+
+    Sub-slices reproduce predicted_ratio / predicted_sin_elev / _pass_span exactly
+    (the velocity at a slice end is the one-sided difference np.gradient uses).
+    """
+
+    __slots__ = ("D", "c", "d", "lo", "pl", "r", "se", "trecv")
+
+    def __init__(self, pl, g, k, w, c):
+        n = len(pl.tau)
+        lo, hi = max(0, k - w), min(n, k + w + 1)
+        self.pl, self.lo, self.c = pl, lo, c
+        d = pl.pos[lo:hi] - g
+        r = np.linalg.norm(d, axis=1)
+        vr = -np.sum(d * pl._vel[lo:hi], axis=1) / np.maximum(r, 1.0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            self.D = c / (c - vr)
+        self.d, self.r = d, r
+        self.trecv = pl.tau[lo:hi] + r / c
+        self.se = np.clip(d[:, 2] / np.maximum(r, 1.0), 0.0, 1.0)
+
+    def _D(self, lo, hi):
+        a, b = lo - self.lo, hi - self.lo
+        D = self.D[a:b].copy()
+        fwd, c = self.pl._fwd, self.c
+        with np.errstate(divide="ignore", invalid="ignore"):
+            for j, f in ((0, fwd[lo]), (b - a - 1, fwd[hi - 2])):
+                vr = -np.sum(self.d[a + j][None, :] * f[None, :], axis=1) / np.maximum(
+                    self.r[a + j : a + j + 1], 1.0
+                )
+                D[j] = (c / (c - vr))[0]
+        return D
+
+    def span(self, k, half):
+        n = len(self.pl.tau)
+        lo, hi = max(0, k - int(half)), min(n, k + int(half) + 1)
+        if hi - lo < 3:
+            return None
+        D = self._D(lo, hi)
+        D = D[np.isfinite(D) & (D > 0)]
+        if len(D) < 3:
+            return None
+        return float(np.log(D.max() / D.min()))
+
+    def predict(self, t_abs, k, half, bb):
+        n = len(self.pl.tau)
+        lo = max(0, k - int(half) - 120)
+        hi = min(n, k + int(half) + 120)
+        if hi - lo < 3:
+            return None
+        a, b = lo - self.lo, hi - self.lo
+        trecv = self.trecv[a:b]
+        y = self.se[a:b] if bb else self._D(lo, hi)
+        ok = (t_abs >= trecv[0]) & (t_abs <= trecv[-1])
+        out = np.interp(t_abs, trecv, y)
+        out[~ok] = np.nan
+        return out
 
 
 def event_sigma(ev, opts: Options) -> float:
@@ -406,7 +505,21 @@ def _pass_span(pl, g, k, half, c):
     return float(np.log(D.max() / D.min()))
 
 
-def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_dur=None):
+def prepare_events(events):
+    """Option-free event arrays for score_points(prepared=...), built once per search."""
+    return [_PrepEvent(e) for e in events]
+
+
+def score_points(
+    events,
+    planes,
+    gxyz,
+    c,
+    opts: Options,
+    t0_window=None,
+    clip_dur=None,
+    prepared=None,
+):
     """Joint log-likelihood per grid point. t0_window=(lo, hi) unix bounds on recording start."""
     passes = find_passes(planes, gxyz, opts, c)
     n = len(gxyz)
@@ -414,42 +527,62 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
     t0 = np.full(n, np.nan)
     matches = [None] * n
     clip_dur = clip_dur or (max(e.t_end for e in events) + 5 if events else 0)
-    spans = {id(e): _obs_span(e) for e in events}
+    pes = [p.with_opts(opts) for p in (prepared or prepare_events(events))]
+    miss = [p.miss for p in pes]
+    all_miss = -sum(miss)
+    tonal_pl = [pl.cls in TONAL_CLASSES for pl in planes]
+    uniform = [_kin(pl) for pl in planes]
+    # widest slice any event needs around a CPA sample (prediction window)
+    wmax = max((int(p.half_pred) + 120 for p in pes), default=0)
+    t0lo = t0_window[0] - opts.dt_tol_s if t0_window else None
+    t0hi = t0_window[1] + opts.dt_tol_s if t0_window else None
     for i in range(n):
         P = passes[i]
         if not P:
             # no aircraft near this point: every event is a miss (finite, not -inf)
-            logl[i] = -sum(miss_cost(e, opts) for e in events)
+            logl[i] = all_miss
             if t0_window:
                 t0[i] = 0.5 * (t0_window[0] + t0_window[1])
             continue
+        g = gxyz[i]
+        geo = {}
         # per event, candidate (logl, T0, pass)
         per_ev = []
-        for ev in events:
+        for pe in pes:
+            ev = pe.ev
             cand = []
             for pi, k, rm, tr in P:
-                if (
-                    not opts.include_jets
-                    and not is_broadband(ev)
-                    and planes[pi].cls not in TONAL_CLASSES
-                ):
+                if not opts.include_jets and not pe.bb and not tonal_pl[pi]:
                     continue  # jets are only loaded for broadband events
-                T0c = tr - ev.t_cpa
-                if t0_window and not (
-                    t0_window[0] - opts.dt_tol_s <= T0c <= t0_window[1] + opts.dt_tol_s
-                ):
+                T0c = tr - pe.t_cpa
+                if t0_window and not (t0lo <= T0c <= t0hi):
                     continue
+                pl = planes[pi]
+                G = None
+                if uniform[pi]:
+                    G = geo.get((pi, k))
+                    if G is None:
+                        G = geo[(pi, k)] = _PassGeom(pl, g, k, wmax, c)
                 # cheap scale-free prefilter: the predicted Doppler span over the
                 # event's duration must be able to cover the observed span
-                half = (ev.times[-1] - ev.times[0]) / 2 + opts.dt_tol_s
-                if not is_broadband(ev):
-                    sp = _pass_span(planes[pi], gxyz[i], k, half, c)
-                    if sp is None or sp + opts.span_tol < spans[id(ev)]:
+                if not pe.bb:
+                    sp = (
+                        G.span(k, pe.half_pf)
+                        if G is not None
+                        else _pass_span(pl, g, k, pe.half_pf, c)
+                    )
+                    if sp is None or sp + opts.span_tol < pe.obs_span:
                         continue
-                ll, T0, sc = event_pass_loglik(ev, planes[pi], gxyz[i], k, tr, c, opts)
+                T0s, t_abs = pe.t_abs(T0c)
+                if G is not None:
+                    D = G.predict(t_abs, k, pe.half_pred, pe.bb)
+                else:
+                    pred = predicted_sin_elev if pe.bb else predicted_ratio
+                    D = pred(pl, g, t_abs, c, k, pe.half_pred)
+                ll, T0, sc = _loglik_from_pred(pe, D, T0s, opts)
                 if np.isfinite(ll):
                     ll += cpa_consistency(ev, rm, opts)
-                    chi2 = -2.0 * ll / (event_weight(ev, opts) * len(ev.times))
+                    chi2 = -2.0 * ll / pe.chi2_den
                     cand.append((ll, T0, pi, rm, sc, chi2))
             per_ev.append(cand)
         hyps = sorted({round(cnd[1], 1) for cand in per_ev for cnd in cand})
@@ -462,39 +595,41 @@ def score_points(events, planes, gxyz, c, opts: Options, t0_window=None, clip_du
                 if events
                 else [0.0]
             )
+        # close tonal passes that could charge the silence penalty
+        quiet = [
+            (pi, rm, tr)
+            for pi, _k, rm, tr in P
+            if rm <= opts.r_silence_m and (opts.include_jets or tonal_pl[pi])
+        ]
         best = (-np.inf, None, None)
         for T0h in hyps:
-            if t0_window and not (
-                t0_window[0] - opts.dt_tol_s <= T0h <= t0_window[1] + opts.dt_tol_s
-            ):
+            if t0_window and not (t0lo <= T0h <= t0hi):
                 continue
             tot, used = 0.0, []
+            used_pi = set()
             for e_i, cand in enumerate(per_ev):
                 ok = [
                     cnd
                     for cnd in cand
-                    if abs(cnd[1] - T0h) <= opts.dt_tol_s
-                    and cnd[2] not in [u[1] for u in used]
+                    if abs(cnd[1] - T0h) <= opts.dt_tol_s and cnd[2] not in used_pi
                 ]
                 if ok:
                     b = max(ok, key=lambda z: z[0])
                     if opts.marginalize:
                         # association ambiguity: sum over candidate aircraft and the
                         # "not in ADS-B / not this pass" alternative instead of the max
-                        alts = [z[0] for z in ok] + [-miss_cost(events[e_i], opts)]
+                        alts = [z[0] for z in ok] + [-miss[e_i]]
                         tot += float(np.logaddexp.reduce(alts))
                     else:
                         tot += b[0]
                     used.append((e_i, b[2], b[3], b[4], b[5]))
+                    used_pi.add(b[2])
                 else:
                     # as bad as a fit where every sample is an outlier (0.5 * 4^2 per effective sample)
-                    tot -= miss_cost(events[e_i], opts)
+                    tot -= miss[e_i]
             # silence: close tonal passes inside the clip that no event explains
-            used_pl = {u[1] for u in used}
-            for pi, _k, rm, tr in P:
-                if pi in used_pl or rm > opts.r_silence_m:
-                    continue
-                if not opts.include_jets and planes[pi].cls not in TONAL_CLASSES:
+            for pi, rm, tr in quiet:
+                if pi in used_pi:
                     continue
                 if T0h <= tr <= T0h + clip_dur:
                     tot -= opts.silence_penalty / 6.0 * silence_cost(rm, opts)
@@ -584,6 +719,7 @@ def search(
 ):
     """Coarse-to-fine search. elev_fn(lat, lon) -> metres. Returns dict with levels and best."""
     levels = []
+    prepared = prepare_events(events)  # event arrays once; option values per level
     centers = [(0.0, 0.0, radius_m)]
     for li, step in enumerate(steps):
         xs, ys = [], []
@@ -603,7 +739,9 @@ def search(
         o = Options(
             **{**opts.__dict__, "sigma_model": opts.sigma_model * (step / 50.0) ** 0.5}
         )
-        res = score_points(events, planes, g, c, o, t0_window, clip_dur)
+        res = score_points(
+            events, planes, g, c, o, t0_window, clip_dur, prepared=prepared
+        )
         if progress:
             progress(li, len(g))
         temp = birge_temperature(res) * opts.temper_extra
