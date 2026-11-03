@@ -22,8 +22,8 @@ import gzip
 import hashlib
 import json
 import math
+import multiprocessing
 import os
-import pickle
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -31,9 +31,17 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dopplergeo import detect, env, score
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from dopplergeo import env, evcache, locate, score
 from dopplergeo.cache import cache_dir
+
+_THREAD_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
 
 
 def km(lat1, lon1, lat2, lon2):
@@ -62,18 +70,50 @@ def load_tracks(t_a, t_b):
     return out
 
 
-def events_for(entry, det_kw, work):
-    key = hashlib.md5(
-        json.dumps([entry["audio"], det_kw], sort_keys=True).encode()
-    ).hexdigest()[:10]
-    f = work / f"ev_{entry['id']}_{key}.pkl"
-    if f.exists():
-        return pickle.loads(f.read_bytes())
-    x, sr = detect.load_audio(entry["audio"])
-    ev, _ = detect.detect_events(x, sr, **det_kw)
-    r = (ev, len(x) / sr)
-    f.write_bytes(pickle.dumps(r))
-    return r
+def events_for(entry, det_kw, work=None):
+    """(events, duration_s) from the shared content-addressed event cache.
+
+    The key covers the audio bytes, detector settings and detector source, so
+    a changed clip or detector can never reuse stale events (the old per-run
+    pickles were keyed on the audio *path* only).
+    """
+    kw = dict(det_kw)
+    bb = bool(kw.pop("broadband", False))
+    ev, _rej, dur, _d, _info = locate.detect_cached(
+        entry["audio"], broadband=bb, plots=False, **kw
+    )
+    return ev, dur
+
+
+def _code_hash() -> str:
+    h = hashlib.sha256()
+    for f in sorted((ROOT / "dopplergeo").glob("*.py")) + [Path(__file__).resolve()]:
+        h.update(f.name.encode() + b"\0" + f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+_audio_hash: dict = {}
+
+
+def run_key(entry, tol, opt_kw, det_kw, radius_km, offset_km) -> str:
+    """Identity of one result row: code, audio content, every setting that matters."""
+    a = entry["audio"]
+    if a not in _audio_hash:
+        _audio_hash[a] = evcache.file_sha256(a)
+    m = {
+        "code": _code_hash(),
+        "audio": _audio_hash[a],
+        "entry": {
+            k: entry.get(k)
+            for k in ("t0_unix", "truth_lat", "truth_lon", "truth_unc_m")
+        },
+        "tol": float(tol),
+        "score": evcache._canon(opt_kw),
+        "detect": evcache._canon(det_kw),
+        "radius_km": float(radius_km),
+        "offset_km": float(offset_km),
+    }
+    return hashlib.sha256(json.dumps(m, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def _detect_job(args):
@@ -83,6 +123,32 @@ def _detect_job(args):
     except Exception:  # noqa: BLE001 - surfaced again by run_one
         return False
     return True
+
+
+def auto_jobs(mem_per_job_gb: float, cpu=None) -> int:
+    """Workers that fit in MemAvailable (80%), at most the CPU count."""
+    cpu = cpu or os.cpu_count() or 1
+    avail = None
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                avail = int(line.split()[1]) / 1024**2  # GB
+    except OSError:
+        pass
+    if avail is None:
+        return 1
+    return max(1, min(cpu, int(0.8 * avail // max(mem_per_job_gb, 0.1))))
+
+
+def _worker_threads(jobs: int) -> None:
+    """One BLAS/OpenMP pool per worker sized cpu/jobs (no oversubscription).
+
+    Explicit environment settings win. Workers are spawned, so they read these
+    before numpy loads its BLAS.
+    """
+    n = str(max(1, (os.cpu_count() or 1) // max(jobs, 1)))
+    for v in _THREAD_VARS:
+        os.environ.setdefault(v, n)
 
 
 def region_center(entry, offset_km):
@@ -98,6 +164,11 @@ def run_one(args):
     work = Path(work)
     t_start = time.time()
     row = {"id": entry["id"], "split": entry.get("split", ""), "tol_s": tol}
+    try:
+        row["run_key"] = run_key(entry, tol, opt_kw, det_kw, radius_km, offset_km)
+    except OSError as e:
+        row["error"] = f"{type(e).__name__}: {e}"
+        return row
     try:
         ev, dur = events_for(entry, det_kw, work)
         ev = [e for e in ev if not e.likely_ground_vehicle]
@@ -276,8 +347,20 @@ def main(argv=None):
     ap.add_argument("--det", action="append", help="detect_events key=value")
     ap.add_argument("--radius-km", type=float, default=15.0)
     ap.add_argument("--offset-km", type=float, default=5.0)
-    ap.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument(
+        "--jobs",
+        type=int,
+        default=0,
+        help="scoring workers (0 = auto from MemAvailable / --mem-per-job-gb)",
+    )
     ap.add_argument("--det-jobs", type=int, default=2)
+    ap.add_argument(
+        "--mem-per-job-gb",
+        type=float,
+        default=2.0,
+        help="peak RSS budget per scoring worker for --jobs 0 (measured ~1.7 GB "
+        "on a 1600-aircraft crop)",
+    )
     ap.add_argument("--heatmaps", action="store_true")
     ap.add_argument(
         "--resume", action="store_true", help="keep rows already in rows.jsonl"
@@ -292,6 +375,10 @@ def main(argv=None):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     opt_kw, det_kw = parse_set(a.set), parse_set(a.det)
+    if a.jobs <= 0:
+        a.jobs = auto_jobs(a.mem_per_job_gb)
+    _worker_threads(max(a.jobs, a.det_jobs))
+    ctx = multiprocessing.get_context("spawn")
     jobs = []
     for m in man:
         # entries without a known start time carry their own fixed window
@@ -301,7 +388,7 @@ def main(argv=None):
                 (m, t, opt_kw, det_kw, str(out), a.radius_km, a.offset_km, a.heatmaps)
             )
     # detection first (memory heavy: a 20 min clip spectrogram is ~2-3 GB), cached
-    with ProcessPoolExecutor(a.det_jobs) as ex:
+    with ProcessPoolExecutor(a.det_jobs, mp_context=ctx) as ex:
         list(ex.map(_detect_job, [(m, det_kw, str(out)) for m in man]))
     # resumable: (id, tol) rows already in rows.jsonl are kept, not recomputed;
     # results are written as they complete, and one OOM-killed worker only
@@ -309,17 +396,35 @@ def main(argv=None):
     rows, done = [], set()
     rp = out / "rows.jsonl"
     if a.resume and rp.exists():
+        # a row is reused only if its run_key (code, audio bytes, detector,
+        # scoring and search settings) matches what this run would compute
+        want = {
+            (j[0]["id"], float(j[1])): run_key(
+                j[0], j[1], opt_kw, det_kw, a.radius_km, a.offset_km
+            )
+            for j in jobs
+        }
+        stale = 0
         for line in rp.read_text().splitlines():
             r = json.loads(line)
             if "BrokenProcessPool" in str(r.get("error", "")):
                 continue
+            k = (r["id"], float(r["tol_s"]))
+            if k in want and r.get("run_key") != want[k]:
+                stale += 1
+                continue
             rows.append(r)
-            done.add((r["id"], float(r["tol_s"])))
+            done.add(k)
+        if stale:
+            print(
+                f"resume: {stale} row(s) with a different run_key recomputed",
+                file=sys.stderr,
+            )
     jobs = [j for j in jobs if (j[0]["id"], float(j[1])) not in done]
     with open(rp, "w") as log:
         for r in rows:
             log.write(json.dumps(r) + "\n")
-        with ProcessPoolExecutor(a.jobs, max_tasks_per_child=1) as ex:
+        with ProcessPoolExecutor(a.jobs, max_tasks_per_child=1, mp_context=ctx) as ex:
             futs = {ex.submit(run_one, j): j for j in jobs}
             for f in as_completed(futs):
                 j = futs[f]

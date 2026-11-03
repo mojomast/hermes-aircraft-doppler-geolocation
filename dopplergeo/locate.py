@@ -53,14 +53,15 @@ def days_spanned(t_a: float, t_b: float) -> list[dt.date]:
     return out
 
 
-def detect_cached(recording, broadband=False, cache=True, plots=True):
+def detect_cached(recording, broadband=False, cache=True, plots=True, **det_kw):
     """Events for a recording, reusing the content-addressed event cache.
 
     Returns (events, rejected, duration_s, diag_or_None, info). diag holds what
     plot_detection needs (recomputed cheaply from the audio on a cache hit, and
-    only if plots=True). info = {"hit": bool, "key": str | None}.
+    only if plots=True). info = {"hit": bool, "key": str | None}. Extra det_kw
+    are passed to detect.detect_events and are part of the cache key.
     """
-    det_kw = {"broadband": bool(broadband)}
+    det_kw = {**det_kw, "broadband": bool(broadband)}
     key = material = hit = None
     if cache:
         key, material = evcache.make_key(
@@ -75,7 +76,7 @@ def detect_cached(recording, broadband=False, cache=True, plots=True):
             x, sr = detect.load_audio(recording)
             diag = {
                 "spectrogram": detect.log_spectrogram(
-                    x, sr, detect.WIN_S, detect.HOP_S, 1000.0
+                    x, sr, detect.WIN_S, detect.HOP_S, det_kw.get("fmax", 1000.0)
                 ),
                 "rejected": rejected,
             }
