@@ -84,14 +84,23 @@ class Event:
         return d
 
 
-def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+def log_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+    """(f, t, L): dB spectrogram between 20 Hz and fmax."""
     nper = int(sr * win_s)
     hop = max(1, int(sr * hop_s))
     f, t, S = signal.spectrogram(
         x, sr, nperseg=nper, noverlap=nper - hop, window="hann", detrend="constant"
     )
     keep = (f >= 20) & (f <= fmax)
-    f, L = f[keep], 10 * np.log10(S[keep] + 1e-20)
+    return f[keep], t, 10 * np.log10(S[keep] + 1e-20)
+
+
+# detect_events() STFT settings (also used to redraw a cached detection plot)
+HOP_S, WIN_S = 0.25, 1.0
+
+
+def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
+    f, t, L = log_spectrogram(x, sr, win_s, hop_s, fmax)
     df = f[1] - f[0]
     # remove the smooth spectral envelope (wind, roar, traffic) with a running median across frequency
     k = max(3, int(round(12.0 / df)) | 1)
@@ -147,20 +156,28 @@ def viterbi_segments(score, max_jump, birth=6.0, death=6.0, jump_pen=0.1):
     NEG = -1e18
     on = np.full(nb, NEG)
     off = 0.0
-    back_on = np.zeros((nb, nt), dtype=np.int32)  # -1 means came from off
+    back_on = np.zeros((nt, nb), dtype=np.int32)  # -1 means came from off
     back_off = np.zeros(nt, dtype=np.int32)  # -1 stay off, else came from bin
+    # all 2*max_jump+1 predecessors at once; column c is jump j = c - max_jump
+    # (on[b - j]), so argmax's first-maximum rule keeps the old loop's
+    # tie-break (lowest j wins, strict >). Out-of-range sources are NEG.
+    score_t = np.ascontiguousarray(score.T)  # frame rows: contiguous per step
+    js = np.arange(-max_jump, max_jump + 1)
+    pen = jump_pen * np.abs(js)
+    pad = np.full(nb + 2 * max_jump, NEG)
+    rows = np.arange(nb)
+    src_idx = rows[:, None] - js[None, :] + max_jump  # index into pad
+    oob = (rows[:, None] - js[None, :] < 0) | (rows[:, None] - js[None, :] >= nb)
     for i in range(nt):
-        best = np.full(nb, NEG)
-        arg = np.full(nb, -1, dtype=np.int32)
-        for j in range(-max_jump, max_jump + 1):
-            sh = np.roll(on, j) - jump_pen * abs(j)
-            if j > 0:
-                sh[:j] = NEG
-            elif j < 0:
-                sh[j:] = NEG
-            m = sh > best
-            best[m] = sh[m]
-            arg[m] = (np.arange(nb) - j)[m]
+        pad[max_jump : max_jump + nb] = on
+        cand = pad[src_idx] - pen
+        cand[oob] = NEG
+        c = np.argmax(cand, axis=1)
+        best = cand[rows, c]
+        arg = (rows - js[c]).astype(np.int32)
+        none = ~(best > NEG)
+        best[none] = NEG
+        arg[none] = -1
         from_off = off - birth
         m = from_off > best
         best[m] = from_off
@@ -170,8 +187,8 @@ def viterbi_segments(score, max_jump, birth=6.0, death=6.0, jump_pen=0.1):
             new_off, back_off[i] = on[k] - death, k
         else:
             new_off, back_off[i] = off, -1
-        on = best + score[:, i]
-        back_on[:, i] = arg
+        on = best + score_t[i]
+        back_on[i] = arg
         off = new_off
     # backtrack
     segs, cur = [], []
@@ -180,7 +197,7 @@ def viterbi_segments(score, max_jump, birth=6.0, death=6.0, jump_pen=0.1):
     for i in range(nt - 1, -1, -1):
         if state >= 0:
             cur.append((i, state))
-            prev = back_on[state, i]
+            prev = back_on[i, state]
             if prev < 0:
                 segs.append(cur[::-1])
                 cur = []
@@ -447,7 +464,7 @@ def detect_events(
     without tonal lines (see broadband.py); tonal events take precedence when both
     cover the same pass.
     """
-    hop_s, win_s = 0.25, 1.0
+    hop_s, win_s = HOP_S, WIN_S
     f, t, Z, L = whitened_spectrogram(x, sr, win_s, hop_s, fmax)
     f0_grid = np.arange(f0_min, f0_max, 0.5)
     HS, _ = harmonic_sum(f, Z, f0_grid, kmax, fmax)
@@ -460,9 +477,10 @@ def detect_events(
     max_jump = max(2, round(max_slope_hz_s * hop_s / 0.5))  # f0 grid step 0.5 Hz
     rejected = []
     cands = []  # dicts: t_start, t_end, snr, lines{k: (t, f, z)}
-    mask = np.ones_like(score)
+    # score * mask + (mask - 1) * 5, kept up to date in place: masked cells are -5
+    masked = score.copy()
     for _ in range(max_events * 3):
-        segs = viterbi_segments(score * mask + (mask - 1) * 5, max_jump)
+        segs = viterbi_segments(masked, max_jump)
         segs = [sg for sg in segs if (sg[1] - sg[0]) * hop_s >= min_duration_s]
         if not segs:
             break
@@ -475,7 +493,7 @@ def detect_events(
             mb = np.round((f0_grid[bins] * mult - f0_min) / 0.5).astype(int)
             for dlt in range(-6, 7):
                 ok = (mb + dlt >= 0) & (mb + dlt < len(f0_grid))
-                mask[(mb + dlt)[ok], frames[ok]] = 0
+                masked[(mb + dlt)[ok], frames[ok]] = -5.0
         snr = float(np.mean(HS[bins, frames]))
         if snr < min_snr:
             rejected.append(

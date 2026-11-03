@@ -49,15 +49,17 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 
 ## CLI
 
-`python3 -m dopplergeo detect RECORDING [--out DIR] [--broadband]`
+`python3 -m dopplergeo detect RECORDING [--out DIR] [--broadband] [--no-plots] [--no-cache]`
 
 | Flag | Meaning |
 | --- | --- |
 | `RECORDING` | Any audio or video file ffmpeg can decode (resampled to 4 kHz mono). |
 | `--out DIR` | Output directory. Default: `<recording>.doppler/`. |
 | `--broadband` | Also detect jet passes from the ground-reflection (Lloyd's mirror) delay (experimental, default off). |
+| `--no-plots` | Skip `detection.png` (default: written). |
+| `--no-cache` | Re-run detection even if the event cache already has this audio and these detector settings. |
 
-`python3 -m dopplergeo locate RECORDING [--date D] [--region R] [--offline] [--time-tolerance S] [--include-jets] [--broadband] [--temper-extra K] [--out DIR]`
+`python3 -m dopplergeo locate RECORDING [--date D] [--region R] [--offline] [--time-tolerance S] [--include-jets] [--broadband] [--temper-extra K] [--out DIR] [--no-plots] [--no-cache]`
 
 | Flag | Meaning |
 | --- | --- |
@@ -69,10 +71,16 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 | `--broadband` | Also detect and score broadband (ground-reflection) jet passes. Experimental, default off. In the held-out run it gave more answers but a slightly worse median (see results). |
 | `--temper-extra` | Posterior temper on top of the Birge ratio, which sets how wide the 68 %/95 % areas are. Default 4, calibrated on tune. Larger values give wider, safer areas. |
 | `--out` | Output directory. Default: `<recording>.doppler/`. |
+| `--no-plots` | Skip `detection.png` and `heatmap.png` (default: both written). |
+| `--no-cache` | Bypass the event cache (see below). |
 
-The same options from Python: `locate.locate(..., broadband=True, temper_extra=4)` and `locate.detect_only(rec, out, broadband=True)`. Other scorer settings are `dopplergeo.score.Options` fields, which the eval harness sets with `--set key=value`.
+`locate` checks that a region and a date (hint or file metadata) are available before it decodes any audio, so a missing hint fails in milliseconds; the report then has no `events`.
+
+The same options from Python: `locate.locate(..., broadband=True, temper_extra=4, plots=True, cache=True)` and `locate.detect_only(rec, out, broadband=True, plots=True, cache=True)`. Other scorer settings are `dopplergeo.score.Options` fields, which the eval harness sets with `--set key=value`.
 
 **Cache.** Downloads are cached in `~/.cache/doppler-geo`, or in `$DOPPLER_GEO_CACHE` if set: ADS-B crops per day and region, DEM tiles, weather and the type table. Writes are atomic, so parallel runs can share one cache. Only the crop of each adsb.lol day is stored, not the ~3 GB release.
+
+**Event cache.** Detected events are cached in `<cache>/events/` keyed by the SHA-256 of the audio file bytes, the decode rate, the detector settings (`broadband`, ...) and a hash of the detector source (`detect.py`, `broadband.py`, `physics.py`). `detect` followed by `locate`, or `locate` again with another region, date, tolerance or scorer setting, reuses the detection instead of repeating it; a changed file or detector is a miss. Reports carry `detection_cache.hit`. Entries are JSON written atomically; a corrupt or mismatched entry is ignored and replaced; the directory keeps the 500 most recently used entries (90 days). Disable per call with `--no-cache` / `cache: false`. On a hit with plots on, only the dB spectrogram is recomputed to draw `detection.png`.
 
 ## Hermes tools
 
@@ -81,7 +89,7 @@ The plugin registers one skill, `aircraft-doppler-geolocation:aircraft-doppler-g
 | Tool | Parameters | Network |
 | --- | --- | --- |
 | `doppler_detect` | `recording` (required), `out_dir`, `broadband` (bool, default false) | none |
-| `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `broadband` (bool, default false), `temper_extra` (number, default 4), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
+| `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `broadband` (bool, default false), `temper_extra` (number, default 4), `plots` (bool, default true), `cache` (bool, default true), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
 
 `doppler_detect` returns `events` (per event: `kind` (`tonal`, or `broadband` when `broadband` is true), `t_cpa`, `f0_hz`, `speed_mps`, `cpa_slant_m`, `harmonics`, `snr_z`, `f_test`, `p_value`, plus `tau_max_s` and `T_s` for broadband events), `rejected_segments` with reasons, and `files.detection_png`.
 
@@ -189,7 +197,9 @@ python3 scripts/eval_batch.py manifest.json --out runs/tune --split tune --tol 3
     --det broadband=true --set temper_extra=4
 ```
 
-Flags: `--tol` (one or more start-time tolerances, s; default 30 600), `--split`, `--only ID ...`, `--set key=value` (`score.Options`), `--det key=value` (`detect_events`), `--radius-km` (15), `--offset-km` (5: the search centre is moved off the truth at a bearing derived from the id), `--jobs`, `--det-jobs`, `--heatmaps`, `--resume`.
+Flags: `--tol` (one or more start-time tolerances, s; default 30 600), `--split`, `--only ID ...`, `--set key=value` (`score.Options`), `--det key=value` (`detect_events`), `--radius-km` (15), `--offset-km` (5: the search centre is moved off the truth at a bearing derived from the id), `--jobs` (0 = default: as many workers as fit in 80 % of MemAvailable at `--mem-per-job-gb`, default 2 GB; measured peak 1.7 GB on a 1,600-aircraft crop), `--det-jobs`, `--heatmaps`, `--resume`. Workers are spawned with `OMP/OPENBLAS/MKL_NUM_THREADS = cpu // jobs` unless those are set, so parallel jobs do not oversubscribe BLAS threads.
+
+Events come from the shared event cache (above). Every row carries a `run_key` (hash of the dopplergeo + harness source, the audio bytes, the manifest entry's truth and start time, tolerance, `--set`, `--det`, radius and offset); `--resume` keeps a row only if its `run_key` matches the current run and recomputes the rest.
 
 Manifest: a JSON list. Each entry needs `id`, `audio` (path), `t0_unix` (UTC start of the audio), `truth_lat`, `truth_lon`, `truth_unc_m` (how well the recording spot is known) and `split`. Optional: `skip` (truthy: the harness ignores the clip) and `tol_s_fixed` (a per-clip tolerance that overrides `--tol`, e.g. 9000 s for dab_part1). The other fields (`excluded` with a reason, `loc_evidence`, `time_evidence`, `license`, `attribution`, `url`) are provenance only: the harness does not read `excluded`, so excluded clips are left out with `--split`/`--only`. A real tune entry, trimmed:
 
@@ -199,7 +209,7 @@ Manifest: a JSON list. Each entry needs `id`, `audio` (path), `t0_unix` (UTC sta
   "license": "CC0", "attribution": "Sadiquecat (freesound.org/s/869798)"}
 ```
 
-Outputs: `rows.jsonl`, one row per clip and tolerance (`err_km`, `confidence`, `events`, `n_consistent`, `a68_km2`/`a95_km2`, `in95` and `in95u` = truth inside the 95 % area, unpadded / padded by `truth_unc_m`, and a `calib` sweep over `temper_extra`), and per-clip event caches. Datasets, split policy and how ground truth was established: [docs/evaluation.md](docs/evaluation.md).
+Outputs: `rows.jsonl`, one row per clip and tolerance (`err_km`, `confidence`, `events`, `n_consistent`, `a68_km2`/`a95_km2`, `in95` and `in95u` = truth inside the 95 % area, unpadded / padded by `truth_unc_m`, and a `calib` sweep over `temper_extra`, plus `run_key`). Datasets, split policy and how ground truth was established: [docs/evaluation.md](docs/evaluation.md).
 
 ## Real-world results
 
@@ -317,7 +327,7 @@ ruff check . && ruff format --check .
 
 `tests/test_cli_flags.py` covers the `--broadband` / `--temper-extra` flags and tool parameters, and the offline error message. `tests/test_broadband.py` covers the synthetic broadband pass (geometry recovered for 1.5 m and 5 m mic heights), noise-only and steady-tone negatives, the scorer picking the true point, and tonal events ignoring jets.
 
-Screenshot from an early 0.2.0 run (21 tests). The suite now has 45 tests: 43 pass, 2 network tests skip.
+Screenshot from an early 0.2.0 run (21 tests). The suite now has 64 tests: 62 pass, 2 network tests skip. Equivalence tests pin the optimised scorer and Viterbi to frozen 0.3.0 copies (`tests/ref_score_v030.py`, `tests/test_viterbi_vectorised.py`); `tests/test_event_cache.py` and `tests/test_eval_identity.py` cover cache hits, misses, corruption and invalidation, and eval resume identity.
 
 ![pytest output, early 0.2.0](docs/screenshots/v02-terminal-tests.png)
 

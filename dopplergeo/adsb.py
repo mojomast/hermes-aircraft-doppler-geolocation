@@ -152,13 +152,30 @@ def _key(day, bbox, t0, t1):
     return hashlib.sha256(s.encode()).hexdigest()[:16]
 
 
+_meta_memo: dict = {}
+
+
+def _crop_meta(f: Path):
+    """Header line of a cached crop, memoised on (path, mtime, size)."""
+    try:
+        st = f.stat()
+    except OSError:
+        return None
+    k = (str(f), st.st_mtime_ns, st.st_size)
+    if k not in _meta_memo:
+        try:
+            with gzip.open(f, "rt") as fh:
+                _meta_memo[k] = json.loads(fh.readline())
+        except (OSError, ValueError, EOFError):
+            return None
+    return _meta_memo[k]
+
+
 def _find_cached(day, bbox, t0, t1) -> Path | None:
     d = cache_dir("adsb", str(day))
     for f in sorted(d.glob("*.json.gz")):
-        try:
-            with gzip.open(f, "rt") as fh:
-                meta = json.loads(fh.readline())
-        except (OSError, ValueError):
+        meta = _crop_meta(f)
+        if meta is None:
             continue
         b = meta["bbox"]
         if (
@@ -174,27 +191,31 @@ def _find_cached(day, bbox, t0, t1) -> Path | None:
 
 
 def _read_cache(f: Path, bbox, t0, t1) -> list[dict]:
-    with gzip.open(f, "rt") as fh:
-        fh.readline()
-        planes = [json.loads(line) for line in fh]
+    """Stream the crop, keeping only samples inside bbox and [t0, t1]."""
     la0, lo0, la1, lo1 = bbox
     out = []
-    for a in planes:
-        keep = [
-            i
-            for i, (t, la, lo) in enumerate(zip(a["t"], a["lat"], a["lon"]))
-            if t0 <= t <= t1 and la0 <= la <= la1 and lo0 <= lo <= lo1
-        ]
-        if len(keep) >= 2:
-            out.append(
-                {
-                    **a,
-                    **{
-                        k: [a[k][i] for i in keep]
-                        for k in ("t", "lat", "lon", "alt_m", "gs_mps")
-                    },
-                }
-            )
+    with gzip.open(f, "rt") as fh:
+        fh.readline()
+        for line in fh:
+            a = json.loads(line)
+            ts = a["t"]
+            if not ts or max(ts) < t0 or min(ts) > t1:
+                continue  # no sample in the time window
+            keep = [
+                i
+                for i, (t, la, lo) in enumerate(zip(ts, a["lat"], a["lon"]))
+                if t0 <= t <= t1 and la0 <= la <= la1 and lo0 <= lo <= lo1
+            ]
+            if len(keep) >= 2:
+                out.append(
+                    {
+                        **a,
+                        **{
+                            k: [a[k][i] for i in keep]
+                            for k in ("t", "lat", "lon", "alt_m", "gs_mps")
+                        },
+                    }
+                )
     return out
 
 

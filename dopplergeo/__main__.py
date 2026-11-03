@@ -18,6 +18,16 @@ def main(argv=None):
         action="store_true",
         help="also detect ground-reflection (multipath-delay) jet passes (experimental)",
     )
+    d.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="skip the diagnostic PNGs (detection.png)",
+    )
+    d.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="re-run detection even if the event cache has this audio + settings",
+    )
     lc = sub.add_parser(
         "locate", help="detect events and score locations against ADS-B"
     )
@@ -44,11 +54,27 @@ def main(argv=None):
         help="posterior temper on top of the Birge ratio (95%% area calibration; default 4)",
     )
     lc.add_argument("--out")
+    lc.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="skip the diagnostic PNGs (detection.png, heatmap.png)",
+    )
+    lc.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="re-run detection even if the event cache has this audio + settings",
+    )
     a = ap.parse_args(argv)
     from .locate import detect_only, locate
 
     if a.cmd == "detect":
-        rep = detect_only(a.recording, a.out, broadband=a.broadband)
+        rep = detect_only(
+            a.recording,
+            a.out,
+            broadband=a.broadband,
+            plots=not a.no_plots,
+            cache=not a.no_cache,
+        )
     else:
         rep = locate(
             a.recording,
@@ -60,6 +86,8 @@ def main(argv=None):
             include_jets=a.include_jets,
             broadband=a.broadband,
             temper_extra=a.temper_extra,
+            plots=not a.no_plots,
+            cache=not a.no_cache,
             progress=lambda *p: print("progress", *p, file=sys.stderr),
         )
     print(json.dumps(rep, indent=2))
