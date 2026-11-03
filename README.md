@@ -89,6 +89,34 @@ Images below come from real runs of the scripts on the synthetic self-test, not 
 
 A synthetic propeller tone (110 Hz, 80 m/s, 900 m altitude, gently turning) with tone amplitude 0.29 against noise σ 1.0 is recovered as f0 110.0 Hz, 80.4 m/s, slant 1039 m (true 1040 m). With the recording start known to ±2 s, the true grid point ranks first (0 m error on a 200 m grid). Without a known time, a single flyover lands at the right distance but about 1.4 km off along the track, which is the ambiguity the video describes. A second flyover at a fixed offset, or a known time, is required.
 
+## Real-world geolocation results (v0.2.0)
+
+The full pipeline (events → historical ADS-B → grid search) was evaluated on 12 public recordings with known location and start time. Each clip was run at two start-time tolerances, ±30 s and ±600 s, except dab_part1, which has one run at ±9000 s, giving 23 runs in total. Each run searched a 15 km radius around a centre offset 5 km from the truth. The clips were split before tuning: 7 tune clips (14 runs) and 5 held-out test clips (9 runs). Settings were tuned on the tune split only, and the held-out split was run once after the defaults were frozen (`sigma_model=0.008`, `detect_prob=0.15`, sub-harmonic relabel, CPA-distance consistency term).
+
+![Per-clip error, tune vs held-out, baseline vs final](docs/screenshots/summary.png)
+
+| | runs | error < 3 km | median error | truth inside 95% area* |
+|---|---|---|---|---|
+| Tune, v0.1 defaults | 14 (2 crashed) | 5 | 8.4 km (12 solved) | — |
+| Tune, final | 14 | 7 | 5.2 km | 8 / 14 |
+| Held-out, v0.1 defaults | 9 | 1 | 11.5 km | — |
+| **Held-out, final** | 9 | **1** | 10.8 km | 3 / 9 |
+
+*"95% area" here is the 95% credible area padded by the truth location's own uncertainty. With the unpadded 95% area, the truth fell inside in **0 of 23** runs. The credible areas are badly overconfident and should not be trusted as error bars.
+
+**Confidence flag.** A result is flagged `confidence: low` when fewer than 2 matched events fit well and agree with the CPA distance.
+
+| | right (< 3 km) | wrong |
+|---|---|---|
+| tune: ok | 4 | 0 |
+| tune: low | 3 | 7 |
+| held-out: ok | 0 | 2 |
+| held-out: low | 1 | 6 |
+
+**What works:** clips with several clean propeller passes near an airfield (crq, lgb_0810) locate to about 1 km and are flagged ok. Most single-event results are flagged low, and most of those are wrong.
+
+**Limitations:** on unseen clips the method mostly fails (1 of 9 runs under 3 km). An `ok` flag is not a guarantee: osh_0719 was flagged ok and was still 11–13 km off. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With only 12 clips, these numbers are indicative rather than precise. Treat any output as a hypothesis to check, not as a location.
+
 ## Real-world test (v0.1.1)
 
 Run on 5 public YouTube clips (audio only), 2026-11-02:
@@ -114,7 +142,7 @@ The tracker works on clean real tones. You still pick the frequency band and tim
 ## Limitations
 
 - ADS-B fetch, jet-type filtering, DEM lookup, the time-offset and silence filters, and grid generation are described in the skill but **not scripted** yet.
-- Detection is tested on real audio (above), but you choose the band by hand. Location scoring is tested on synthetic data only, not on real ADS-B.
+- Detection is tested on real audio (above), but you choose the band by hand. Location scoring was evaluated on 12 real clips (see above): about 1 km on clean multi-pass clips, but only 1 of 9 held-out runs was under 3 km, and the 95% areas are overconfident.
 - Harmonics that cross each other and turning flights break the tracker or the straight-pass fit.
 - Needs ADS-B coverage, a date, and serious compute for large search areas.
 
