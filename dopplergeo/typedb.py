@@ -10,7 +10,7 @@ from __future__ import annotations
 import gzip
 import json
 
-from .cache import OfflineMiss, cache_dir
+from .cache import OfflineMiss, atomic_write_bytes, cache_dir
 from .http import get_bytes
 
 TYPES_URL = "https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types2.js"
@@ -30,7 +30,7 @@ def load_types(offline: bool = False) -> dict:
             raw = gzip.decompress(raw)
         except OSError:
             pass
-        path.write_bytes(raw)
+        atomic_write_bytes(path, raw)
     _TYPES = json.loads(path.read_text())
     return _TYPES
 

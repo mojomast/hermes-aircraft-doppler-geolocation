@@ -24,7 +24,7 @@ import zlib
 
 import numpy as np
 
-from .cache import OfflineMiss, cache_dir
+from .cache import OfflineMiss, atomic_write_bytes, cache_dir
 from .http import get_bytes, get_json
 from .physics import C_DEFAULT, speed_of_sound
 
@@ -103,7 +103,7 @@ def _get_tile(lat_i, lon_i, offline):
             missing.write_text("no tile")
             return None
         raise
-    path.write_bytes(data)
+    atomic_write_bytes(path, data)
     return _Tile(path)
 
 
@@ -151,7 +151,7 @@ def temperature_c(
             data = get_json(url)
         except (OSError, urllib.error.URLError, ValueError):
             return None
-        f.write_text(json.dumps(data))
+        atomic_write_bytes(f, json.dumps(data).encode())
     temps = data.get("hourly", {}).get("temperature_2m") or []
     if not temps:
         return None

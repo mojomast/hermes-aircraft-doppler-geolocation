@@ -20,6 +20,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import tarfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -234,7 +235,8 @@ def fetch_tracks(
     stream = io.BufferedReader(_Chain(openers), buffer_size=1 << 20)
     planes = crop_tar_stream(stream, bbox, t0, t1, types, progress)
     f = cache_dir("adsb", str(day)) / f"{_key(day, bbox, t0, t1)}.json.gz"
-    with gzip.open(f, "wt") as fh:
+    tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
+    with gzip.open(tmp, "wt") as fh:
         fh.write(
             json.dumps(
                 {
@@ -249,4 +251,5 @@ def fetch_tracks(
         )
         for a in planes:
             fh.write(json.dumps(a) + "\n")
+    os.replace(tmp, f)  # atomic: readers never see a truncated cache file
     return planes
