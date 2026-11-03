@@ -13,6 +13,8 @@ Efficiency pass; the changes below only remove repeated work. On the 7 tune clip
 - Event-cache entries are validated in full (payload and every event); malformed entries are recomputed.
 - Eval harness: events from the event cache (old per-run pickles were keyed on the audio path); `run_key` per row, checked on `--resume`; `--jobs 0` (new default) sizes workers from available memory (`--mem-per-job-gb`, default 2); spawned workers get `OMP/OPENBLAS/MKL_NUM_THREADS = cpu // jobs`.
 - `scripts/profile_clip.py`: stage timings, peak RSS and a result pickle for before/after comparisons.
+- Benchmark limitations: equivalence was checked on the 7 tune clips only; held-out equivalence is unverified (held-out was not re-run, per the evaluation policy). The warm-cache timings in PR #5 were measured before the stricter event-cache validation was added.
+- Skill script `score_candidates.py`: new opt-in `--smooth-s` option, a centred moving average on ADS-B positions before taking velocities, so 1 Hz position jitter no longer turns into Doppler noise. Contributed by @Bortlesboat in [#3](https://github.com/mojomast/hermes-aircraft-doppler-geolocation/pull/3); centred-window and track-end fixes in [#6](https://github.com/mojomast/hermes-aircraft-doppler-geolocation/pull/6). Off by default (`--smooth-s 0`) and confined to the standalone skill script; `dopplergeo/score.py` is unchanged.
 
 ## 0.3.0 — 2026-11-03
 

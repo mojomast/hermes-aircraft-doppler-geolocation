@@ -28,13 +28,36 @@ def enu(lat, lon, alt, lat0, lon0, h0):
     return np.c_[x, y, alt - h0]
 
 
-def received_curve(tr, cand, f0, c=C, dt=0.5):
+def smooth_track(P, dt, smooth_s):
+    """Centred moving average of positions. ADS-B position jitter of a few tens of metres
+    becomes metres-per-second velocity noise under np.gradient, i.e. several Hz of Doppler.
+
+    The window is forced to an odd number of samples so it is truly centred (an even
+    window shifts the track by half a sample), and the ends are padded by odd reflection
+    about the end points, which extends a straight track linearly so velocities near the
+    ends are not biased towards zero."""
+    n = round(smooth_s / dt)
+    if n < 2 or len(P) < 2:
+        return P
+    h = n // 2  # odd window of 2h+1 samples
+    h = min(h, len(P) - 1)
+    if h < 1:
+        return P
+    k = np.ones(2 * h + 1) / (2 * h + 1)
+    pad = np.pad(P, ((h, h), (0, 0)), mode="reflect", reflect_type="odd")
+    return np.column_stack(
+        [np.convolve(pad[:, i], k, "valid") for i in range(P.shape[1])]
+    )
+
+
+def received_curve(tr, cand, f0, c=C, dt=0.5, smooth_s=0.0):
     """Return (receive_times, freq, cpa_receive_time) for one observer."""
     t, lat, lon, alt = tr.T
     tau = np.arange(t.min(), t.max(), dt)
     P = enu(
         np.interp(tau, t, lat), np.interp(tau, t, lon), np.interp(tau, t, alt), *cand
     )
+    P = smooth_track(P, dt, smooth_s)
     V = np.gradient(P, dt, axis=0)
     r = np.linalg.norm(P, axis=1)
     vr = -np.sum(P * V, axis=1) / r  # +ve approaching, AT EMISSION TIME tau
@@ -79,6 +102,13 @@ def main():
     )
     ap.add_argument("--f0-tol", type=float, default=3.0)
     ap.add_argument("--dt-tol", type=float, default=5.0)
+    ap.add_argument(
+        "--smooth-s",
+        type=float,
+        default=0.0,
+        help="moving-average window (s) on track positions before differentiating; "
+        "~10-20 s helps with jittery 1 Hz ADS-B feeds (0 = off)",
+    )
     ap.add_argument("--out", default="ranked.csv")
     ap.add_argument(
         "--plot", help="write a PNG heatmap of candidate misfit to this path"
@@ -90,7 +120,7 @@ def main():
     ob = np.loadtxt(a.observed, delimiter=",", skiprows=1)
     rows = []
     for cand in cands:
-        trecv, fm, cpa_r, dmin = received_curve(tr, cand, a.f0)
+        trecv, fm, cpa_r, dmin = received_curve(tr, cand, a.f0, smooth_s=a.smooth_s)
         e, dts, fs = score(
             ob[:, 0],
             ob[:, 1],
