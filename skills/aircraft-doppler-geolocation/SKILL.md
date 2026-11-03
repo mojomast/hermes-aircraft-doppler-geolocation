@@ -29,7 +29,8 @@ and it does not work without an audible-or-inaudible propeller/jet tonal in the 
 
 1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass: stop and say so.
 2. `doppler_locate(recording, date_hint, region_hint="lat,lon,radius_km")`: needs a date (or file metadata) and a region. Returns best point, 68/95 % areas, matched aircraft, `heatmap.png`. If metadata contains GPS it is reported directly.
-3. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.
+3. Read `best.confidence` first. `ok` needs at least 2 events that consistently match an aircraft (`best.n_consistent_events`). With `low`, the report carries a `warning` and `credible_area_km2["95_low_conf"]` (the whole search disc): report the search region, not the point. Only with `ok` is `credible_area_km2["95"]` a usable 95 % region, and even then it is roughly calibrated (on held-out clips the only `ok` result was 13 km off).
+4. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.
 
 ## When to Use
 
@@ -40,7 +41,7 @@ and it does not work without an audible-or-inaudible propeller/jet tonal in the 
 
 ## Prerequisites
 
-- `ffmpeg`, Python 3.9+, `pip install numpy scipy soundfile matplotlib`.
+- `ffmpeg`, Python 3.11+, `pip install numpy scipy soundfile matplotlib tifffile`. The manual path below needs your own ADS-B; the tools fetch it themselves.
 - ADS-B history for the date/area (the video scraped a full day for the continental US):
   OpenSky Network historical data via `pyopensky` (https://github.com/junzis/pyopensky) or the
   `traffic` library (https://github.com/xoolive/traffic); community feeds such as

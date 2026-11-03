@@ -14,7 +14,7 @@ dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --out run/
 dopplergeo locate clip.wav --date 2026-09-21 --region 43.8,-79.3,8 --offline   # cache only
 ```
 
-Python / Hermes tool: `locate(recording, date_hint=None, region_hint=None)`.
+Python: `dopplergeo.locate.locate(recording, date_hint=None, region_hint=None, offline=False, out_dir=None, time_tolerance_s=600, include_jets=False)`; Hermes tools: `doppler_detect`, `doppler_locate`. `dopplergeo` is installed as a console script by `pip install -e .`; from a checkout without installing, use `python3 -m dopplergeo`.
 
 - **Detection** (no hand-picked bands): whitened 1 s spectrogram, harmonic sum (k ≤ 6), CFAR, Viterbi multi-ridge tracking with an off state, a joint harmonic-family fit, segment linking across dropouts, and an acceptance test (F-test against a constant tone, frequency drop, plausible speed, closest approach inside the tone, non-degenerate distance).
 - **Data**: ADS-B from adsb.lol daily `globe_history` releases, streamed and cropped to your region and time window; only the crop is cached (`~/.cache/doppler-geo` or `$DOPPLER_GEO_CACHE`). Aircraft types from tar1090-db (jets dropped by default, since they rarely give a tonal line). Copernicus GLO-30 elevation (flat-terrain fallback). Open-Meteo temperature sets the speed of sound.
@@ -23,7 +23,7 @@ Python / Hermes tool: `locate(recording, date_hint=None, region_hint=None)`.
 ![Synthetic heatmap](docs/screenshots/v02-heatmap-synthetic.png)
 ![Automatic detection, real Cessna 421 clip](docs/screenshots/v02-auto-detect-cessna421.png)
 
-**Real-clip detection (0.2.0, automatic):** Cessna 421 clip: 1 event (49 m/s, 159 m CPA). "Planes overhead / birds" clip: 2 events (57 m/s at 1.4 km; 67 m/s at 1.1 km). Amsterdam city ambience, a 23 s jet clip, and the Conquest tower flyby: 0 events (expected: no clean tonal pass). An end-to-end real location with a known place and time has **not** been verified yet; the full pipeline is verified on synthetic data only (0 m grid error, start time within 0.3 s).
+**Real-clip detection (0.2.0, automatic):** Cessna 421 clip: 1 event (49 m/s, 159 m CPA). "Planes overhead / birds" clip: 2 events (57 m/s at 1.4 km; 67 m/s at 1.1 km). Amsterdam city ambience, a 23 s jet clip, and the Conquest tower flyby: 0 events (expected: no clean tonal pass). The full pipeline is exact on synthetic data (0 m grid error, start time within 0.3 s). On real recordings with a known place and time it locates clean multi-pass clips to about 1 km but mostly fails on unseen clips; see [Real-world geolocation results](#real-world-geolocation-results-v020).
 
 ### Data credits
 
@@ -31,6 +31,7 @@ Python / Hermes tool: `locate(recording, date_hint=None, region_hint=None)`.
 - Aircraft types: [wiedehopf/tar1090-db](https://github.com/wiedehopf/tar1090-db).
 - Elevation: Copernicus DEM GLO-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA.
 - Weather: [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
+- Evaluation recordings (not shipped in the repo): Freesound clips under CC0 by Sadiquecat, joeffl, sounds_from_palestine and nicotep; radio aporee ::: maps recordings in the public domain by Jan Krtička, Boris Allenou, nicozentz, Flavien Gillié, David Pitt and sjdowgray; public YouTube videos, credited where shown below. Clip IDs, links and licences are recorded in the eval manifest (kept outside the repo, since the audio is not redistributed here).
 
 ## What you get
 
@@ -158,10 +159,11 @@ The tracker works on clean real tones. You still pick the frequency band and tim
 
 ## Limitations
 
-- ADS-B fetch, jet-type filtering, DEM lookup, the time-offset and silence filters, and grid generation are described in the skill but **not scripted** yet.
-- Detection is tested on real audio (above), but you choose the band by hand. Location scoring was evaluated on 12 real clips (see above): about 1 km on clean multi-pass clips, but only 1 of 9 held-out runs was under 3 km, and the 95% areas are overconfident.
-- Harmonics that cross each other and turning flights break the tracker or the straight-pass fit.
-- Needs ADS-B coverage, a date, and serious compute for large search areas.
+- Detection needs tonal (propeller / engine) lines. Broadband jet roar, commentary-heavy or high-passed livestream audio give no events.
+- On held-out real clips only 1 of 14 runs was under 3 km (median 12.1 km for solved runs). A `confidence: ok` flag is not a guarantee; with `low`, use the whole search area as the answer.
+- One flyover leaves an along-track ambiguity, and a straight track a left/right mirror ambiguity.
+- The standalone scripts (`doppler_track.py`, `score_candidates.py`) still need a hand-picked band; the `dopplergeo` package does not.
+- Needs a date, adsb.lol coverage for that day (some 2023-2024 releases have no data), a region of at most 60 km radius, and roughly 3 GB of download per uncached day.
 
 ## Ethics
 
@@ -170,8 +172,8 @@ Use for forensics, journalism, research, or auditing your own recordings. Locati
 ## Tests
 
 ```bash
-pip install -e ".[dev]"   # needs ffmpeg on PATH
-python -m unittest discover -s tests -v   # or: python -m pytest tests -v
+pip install -e ".[dev]" pytest   # needs ffmpeg on PATH
+python -m pytest tests -q          # network tests run only with DOPPLER_GEO_NETWORK_TESTS=1
 ```
 
 ## License
