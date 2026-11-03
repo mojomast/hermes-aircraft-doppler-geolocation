@@ -158,18 +158,25 @@ def viterbi_segments(score, max_jump, birth=6.0, death=6.0, jump_pen=0.1):
     off = 0.0
     back_on = np.zeros((nb, nt), dtype=np.int32)  # -1 means came from off
     back_off = np.zeros(nt, dtype=np.int32)  # -1 stay off, else came from bin
+    # all 2*max_jump+1 predecessors at once; column c is jump j = c - max_jump
+    # (on[b - j]), so argmax's first-maximum rule keeps the old loop's
+    # tie-break (lowest j wins, strict >). Out-of-range sources are NEG.
+    js = np.arange(-max_jump, max_jump + 1)
+    pen = jump_pen * np.abs(js)
+    pad = np.full(nb + 2 * max_jump, NEG)
+    rows = np.arange(nb)
+    src_idx = rows[:, None] - js[None, :] + max_jump  # index into pad
+    oob = (rows[:, None] - js[None, :] < 0) | (rows[:, None] - js[None, :] >= nb)
     for i in range(nt):
-        best = np.full(nb, NEG)
-        arg = np.full(nb, -1, dtype=np.int32)
-        for j in range(-max_jump, max_jump + 1):
-            sh = np.roll(on, j) - jump_pen * abs(j)
-            if j > 0:
-                sh[:j] = NEG
-            elif j < 0:
-                sh[j:] = NEG
-            m = sh > best
-            best[m] = sh[m]
-            arg[m] = (np.arange(nb) - j)[m]
+        pad[max_jump : max_jump + nb] = on
+        cand = pad[src_idx] - pen
+        cand[oob] = NEG
+        c = np.argmax(cand, axis=1)
+        best = cand[rows, c]
+        arg = (rows - js[c]).astype(np.int32)
+        none = ~(best > NEG)
+        best[none] = NEG
+        arg[none] = -1
         from_off = off - birth
         m = from_off > best
         best[m] = from_off

@@ -87,18 +87,20 @@ def track_segments(Z, max_jump=20, z_thr=4.0, birth=8.0, min_frames=16):
     v_off = 0.0
     bp = np.zeros((nt, nq), np.int32)  # predecessor q (>=0) or -1 = from off
     off_from_on = np.full(nt, -1, np.int32)
+    # every jump d in [-max_jump, max_jump] at once: column c is d = c - max_jump
+    # (v_on[q - d]); argmax keeps the old loop's first-d-wins tie-break
+    ds = np.arange(-max_jump, max_jump + 1)
+    rows = np.arange(nq)
+    src = rows[:, None] - ds[None, :]
+    oob = (src < 0) | (src >= nq)
+    src = np.clip(src, 0, nq - 1)
     for t in range(1, nt):
-        best = np.full(nq, -np.inf)
-        arg = np.zeros(nq, np.int32)
-        for d in range(-max_jump, max_jump + 1):
-            src = np.roll(v_on, d)
-            if d > 0:
-                src[:d] = -np.inf
-            elif d < 0:
-                src[d:] = -np.inf
-            upd = src > best
-            best[upd] = src[upd]
-            arg[upd] = (np.arange(nq) - d)[upd]
+        cand = v_on[src]
+        cand[oob] = -np.inf
+        c = np.argmax(cand, axis=1)
+        best = cand[rows, c]
+        arg = (rows - ds[c]).astype(np.int32)
+        arg[best == -np.inf] = 0
         from_off = v_off - birth
         use_off = from_off > best
         best[use_off] = from_off
