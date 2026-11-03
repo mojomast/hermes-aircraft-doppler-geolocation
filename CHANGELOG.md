@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Skill script `score_candidates.py`: new opt-in `--smooth-s` option, a centred moving average on ADS-B positions before taking velocities, so 1 Hz position jitter no longer turns into Doppler noise. Contributed by @Bortlesboat in [#3](https://github.com/mojomast/hermes-aircraft-doppler-geolocation/pull/3); centred-window and track-end fixes in #6.
+
 ## 0.3.0 — 2026-11-03
 
 - Broadband (jet) pass detection from the ground-reflection (Lloyd's mirror) multipath delay: band-limited cepstrogram, Viterbi quefrency track, straight-pass fit τ(t) = τ_max/√(1+((t−t_c)/T)²), and gates (`dopplergeo/broadband.py`). Opt-in with `detect_events(..., broadband=True)` or `eval_batch.py --det broadband=true`; enabled from the CLI with `--broadband` (detect and locate) and from the tools with `broadband: true`.
