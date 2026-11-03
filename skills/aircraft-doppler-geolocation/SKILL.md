@@ -116,7 +116,7 @@ slant distance. c ≈ 331.3·√(1+T/273.15) m/s.
 - One flyover with unknown time has an along-track ambiguity, and a straight track has a
   left/right mirror ambiguity; turns, a second event, or a known time break these.
 - ADS-B altitude is barometric/MSL; use geometric altitude when available plus DEM.
-- Raw 1 Hz ADS-B positions jitter by tens of metres, which `np.gradient` turns into several Hz of modelled Doppler. Pass `--smooth-s 10` to `score_candidates.py` for jittery feeds.
+- Raw 1 Hz ADS-B positions jitter by tens of metres, which `np.gradient` turns into several Hz of modelled Doppler. Pass `--smooth-s 10` to `score_candidates.py` for jittery feeds (centred odd window; ends extrapolated so straight tracks are unchanged).
 - 200 m grids can put the true point ~141 m off and score poorly — refine to 100 m.
 - Harmonics that cross each other make the ridge hop between tones. Use a band holding a single harmonic. A turning plane fails the straight-pass fit. Both are expected rejections.
 - Wind/temperature shift c and arrival times; MP3/AAC can hide but not remove low tones.

@@ -127,6 +127,25 @@ class TrackSmoothingTests(unittest.TestCase):
         self.assertLess(err(10), err(0) / 3)
 
 
+class TrackSmoothingBiasTests(unittest.TestCase):
+    def test_straight_track_is_unchanged_with_no_time_shift_or_edge_bias(self):
+        dt = 0.5
+        t = np.arange(0, 200, dt)
+        P = np.c_[70 * (t - 100), 3 * t, np.full_like(t, 900.0)]
+        for smooth_s in (1.0, 4.0, 10.0, 15.0, 20.0):
+            Q = score_candidates.smooth_track(P, dt, smooth_s)
+            self.assertEqual(Q.shape, P.shape)
+            np.testing.assert_allclose(Q, P, atol=1e-9)
+            V = np.gradient(Q, dt, axis=0)
+            np.testing.assert_allclose(V[:, 0], 70.0, atol=1e-9)
+
+    def test_short_track_does_not_crash(self):
+        P = np.c_[np.arange(3.0), np.zeros(3), np.zeros(3)]
+        Q = score_candidates.smooth_track(P, 0.5, 10.0)
+        self.assertEqual(Q.shape, P.shape)
+        np.testing.assert_allclose(Q, P, atol=1e-9)
+
+
 class EndToEndTests(unittest.TestCase):
     def test_synthetic_flyover_is_located(self):
         with tempfile.TemporaryDirectory() as d:
