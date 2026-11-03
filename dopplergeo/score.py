@@ -44,6 +44,9 @@ class Options:
     )
     dt_tol_s: float = 6.0  # clock / CPA-time slack per event
     dt_step_s: float = 0.5
+    # extra posterior temper on top of the Birge ratio (calibrated on real clips so
+    # 95% regions contain the truth ~95% of the time; 1.0 = uncalibrated)
+    temper_extra: float = 4.0
     sigma_floor: float = 0.003  # Doppler-ratio noise floor (0.3% ~ 0.4 Hz at 130 Hz)
     # Model error (ADS-B position/time error, ~20 s track sampling, wind, altitude
     # reference) adds to the detector noise and is correlated over seconds, so
@@ -504,7 +507,7 @@ def search(
         res = score_points(events, planes, g, c, o, t0_window, clip_dur)
         if progress:
             progress(li, len(g))
-        temp = birge_temperature(res)
+        temp = birge_temperature(res) * opts.temper_extra
         p, a68, a95 = posterior(res.logl / temp, step * step)
         levels.append(
             {

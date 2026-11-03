@@ -201,6 +201,29 @@ def coverage(res, tla, tlo, unc_km):
     out["in95u"] = bool(np.any(near & (rank < 0.95) & (p > 0)))
     out["a68_km2"] = round((a68 or 0) / 1e6, 3)
     out["a95_km2"] = round((a95 or 0) / 1e6, 3)
+    # calibration sweep: extra temper factor k on top of the Birge temperature,
+    # evaluated on the coarse full-domain level so the truth is always on the grid
+    C = res["levels"][0]
+    dC = np.hypot(
+        (C["lat"] - tla) * 111.2,
+        (C["lon"] - tlo) * 111.2 * math.cos(math.radians(tla)),
+    )
+    jc = int(np.argmin(dC))
+    sweep = {}
+    for k in (1, 2, 4, 8, 16, 32, 64, 128, 256):
+        pk, _, a95k = score.posterior(
+            C["logl"] / (C.get("temperature", 1.0) * k), C["step"] ** 2
+        )
+        o2 = np.argsort(-pk)
+        rk = np.empty_like(pk)
+        rk[o2] = np.cumsum(pk[o2]) - pk[o2]
+        nearc = dC <= max(unc_km, C["step"] / 1000)
+        sweep[str(k)] = [
+            round(float(rk[jc]), 4),
+            bool(np.any(nearc & (rk < 0.95) & (pk > 0))),
+            round((a95k or 0) / 1e6, 2),
+        ]
+    out["calib"] = sweep  # k -> [truth_mass_above, in95u, a95_km2]
     return out
 
 

@@ -91,31 +91,34 @@ A synthetic propeller tone (110 Hz, 80 m/s, 900 m altitude, gently turning) with
 
 ## Real-world geolocation results (v0.2.0)
 
-The full pipeline (events → historical ADS-B → grid search) was evaluated on 12 public recordings with known location and start time. Each clip was run at two start-time tolerances, ±30 s and ±600 s, except dab_part1, which has one run at ±9000 s, giving 23 runs in total. Each run searched a 15 km radius around a centre offset 5 km from the truth. The clips were split before tuning: 7 tune clips (14 runs) and 5 held-out test clips (9 runs). Settings were tuned on the tune split only, and the held-out split was run once after the defaults were frozen (`sigma_model=0.008`, `detect_prob=0.15`, sub-harmonic relabel, CPA-distance consistency term).
+The full pipeline (events → historical ADS-B → grid search) was evaluated on public recordings with a known location and start time: the original 12 clips plus 25 livestream VODs filmed at known spotting locations. Clips were split by location before any tuning, giving 23 tune clips and 14 held-out clips. Runs use a ±30 s start-time tolerance (the original tune clips also keep a ±600 s run for crq; dab_part1 runs at ±9000 s). Each run searched a 15 km radius around a centre offset 5 km from the truth. Settings were tuned on the tune split only. The held-out split was then run once with the frozen defaults (`sigma_model=0.008`, `detect_prob=0.15`, sub-harmonic relabel, CPA-distance consistency term, `temper_extra=4`).
 
-![Per-clip error, tune vs held-out, baseline vs final](docs/screenshots/summary.png)
+![Per-clip error, tune vs held-out](docs/screenshots/summary.png)
 
-| | runs | error < 3 km | median error | truth inside 95% area* |
-|---|---|---|---|---|
-| Tune, v0.1 defaults | 14 (2 crashed) | 5 | 8.4 km (12 solved) | — |
-| Tune, final | 14 | 7 | 5.2 km | 8 / 14 |
-| Held-out, v0.1 defaults | 9 | 1 | 11.5 km | — |
-| **Held-out, final** | 9 | **1** | 10.8 km | 3 / 9 |
+| | runs | no events / no ADS-B | solved | error < 3 km | median error (solved) | truth inside 95% area* |
+|---|---|---|---|---|---|---|
+| Tune | 24 | 11 / 1 | 12 | 5 | 7.2 km | 9 / 12 |
+| Held-out, previous (5 clips, ±30 s and ±600 s) | 9 | 0 | 9 | 1 | 10.8 km | 3 / 9 |
+| **Held-out, final (14 clips, ±30 s)** | 14 | 6 / 0 | 8 | **1** | **12.1 km** | 6 / 8 |
 
-*"95% area" here is the 95% credible area padded by the truth location's own uncertainty. With the unpadded 95% area, the truth fell inside in **0 of 23** runs. The credible areas are badly overconfident and should not be trusted as error bars.
+*"95% area" is the 95% credible area padded by the truth location's own uncertainty, using the shipped calibration. Point estimates on the 5 original held-out clips at ±30 s are unchanged from the previous run; the median moved because the new held-out clips are harder, not because the method got worse.
 
-**Confidence flag.** A result is flagged `confidence: low` when fewer than 2 matched events fit well and agree with the CPA distance.
+**Livestream clips mostly fail.** 12 of the 16 new tune clips and 6 of the 9 new held-out clips produced no usable events. Spectrograms show why: the stream audio is dominated by host commentary or gated ATC radio, is high-passed (around 80–120 Hz) and compressed, and jet passes appear as broadband noise without tonal engine lines. ADS-B had plenty of close passes for these clips, so the data side is not the problem. Four of these tune clips were diagnosed individually and marked excluded in the manifest; the rest are counted as failures above. Fixing this would need a broadband Doppler model rather than looser detector gates.
+
+**Calibration (`temper_extra=4`).** Without extra tempering, the 95% areas were badly overconfident (the unpadded area contained the truth in 0 of 23 earlier runs). The search now multiplies the Birge temperature by `temper_extra` (default 4, chosen on the tune split). On tune this covers 9 of 12 solved runs; at 64 it covers 11 of 12 but the area grows to the whole 15 km search disc, which is useless. With only 12 tune rows, this calibration is rough.
+
+**Confidence flag.** A result is flagged `confidence: low` when fewer than 2 matched events fit well and agree with the CPA distance. Low-confidence results report the whole search area as their 95% region, so the 95% region is only meaningful when confidence is `ok`.
 
 | | right (< 3 km) | wrong |
 |---|---|---|
-| tune: ok | 4 | 0 |
-| tune: low | 3 | 7 |
-| held-out: ok | 0 | 2 |
+| tune: ok | 3 | 0 |
+| tune: low | 2 | 7 |
+| held-out: ok | 0 | 1 |
 | held-out: low | 1 | 6 |
 
-**What works:** clips with several clean propeller passes near an airfield (crq, lgb_0810) locate to about 1 km and are flagged ok. Most single-event results are flagged low, and most of those are wrong.
+**What works:** clips with several clean propeller passes near an airfield (crq, lgb_0810) locate to about 1 km and are flagged ok.
 
-**Limitations:** on unseen clips the method mostly fails (1 of 9 runs under 3 km). An `ok` flag is not a guarantee: osh_0719 was flagged ok and was still 11–13 km off. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With only 12 clips, these numbers are indicative rather than precise. Treat any output as a hypothesis to check, not as a location.
+**Limitations:** on unseen clips the method mostly fails (1 of 14 held-out runs under 3 km, 6 with no events at all). An `ok` flag is not a guarantee: osh_0719 was the only held-out `ok` result, it was 13.2 km off, and its 95% area missed the truth. One flyover leaves the along-track position ambiguous, and the likelihood then prefers the wrong aircraft. With these small samples the numbers are indicative, not precise. Treat any output as a hypothesis to check, not as a location.
 
 ## Real-world test (v0.1.1)
 
