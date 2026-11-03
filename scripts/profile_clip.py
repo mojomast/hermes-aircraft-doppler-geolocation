@@ -19,12 +19,11 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import eval_batch as eb  # noqa: E402
-from dopplergeo import detect, env, score  # noqa: E402
+import eval_batch as eb
+
+from dopplergeo import detect, env, score
 
 
 def peak_mb():
@@ -84,25 +83,61 @@ def main(argv=None):
         t = time.perf_counter()
         last[0] = t
         res = score.search(
-            evs, pl, lat0, lon0, 15000.0,
+            evs,
+            pl,
+            lat0,
+            lon0,
+            15000.0,
             lambda la, lo: env.elevation(la, lo, offline=True)[0],
-            343.0, o, t0_window=(T0 - a.tol, T0 + a.tol), clip_dur=dur, progress=prog,
+            343.0,
+            o,
+            t0_window=(T0 - a.tol, T0 + a.tol),
+            clip_dur=dur,
+            progress=prog,
         )
         st["search"] = time.perf_counter() - t
     st["peak_mb"] = peak_mb()
-    out = {"clip": a.clip, "events": len(evs), "planes": len(pl), "stages": {k: round(v, 3) for k, v in st.items()},
-           "levels": [(li, n, round(s, 3)) for li, n, s in lv_t]}
+    out = {
+        "clip": a.clip,
+        "events": len(evs),
+        "planes": len(pl),
+        "stages": {k: round(v, 3) for k, v in st.items()},
+        "levels": [(li, n, round(s, 3)) for li, n, s in lv_t],
+    }
     if res and res["best"]:
         b = res["best"]
-        out["err_km"] = round(eb.km(b["lat"], b["lon"], m["truth_lat"], m["truth_lon"]), 4)
+        out["err_km"] = round(
+            eb.km(b["lat"], b["lon"], m["truth_lat"], m["truth_lon"]), 4
+        )
         cov = eb.coverage(res, m["truth_lat"], m["truth_lon"], m["truth_unc_m"] / 1000)
         out.update({k: cov[k] for k in ("in68u", "in95u", "a68_km2", "a95_km2")})
         out["n_consistent"] = score.n_consistent_matches(b["matches"] or [])
     if a.out:
         keep = None
         if res:
-            keep = {"best": res["best"], "levels": [{k: L[k] for k in ("step", "x", "y", "logl", "t0", "temperature", "a68_m2", "a95_m2", "matches")} for L in res["levels"]]}
-        Path(a.out).write_bytes(pickle.dumps({"events": [e.to_dict(series=True) for e in ev], "res": keep}))
+            keep = {
+                "best": res["best"],
+                "levels": [
+                    {
+                        k: L[k]
+                        for k in (
+                            "step",
+                            "x",
+                            "y",
+                            "logl",
+                            "t0",
+                            "temperature",
+                            "a68_m2",
+                            "a95_m2",
+                            "matches",
+                        )
+                    }
+                    for L in res["levels"]
+                ],
+            }
+        Path(a.out).write_bytes(
+            pickle.dumps({"events": [e.to_dict(series=True) for e in ev], "res": keep})
+        )
     print(json.dumps(out))
 
 
