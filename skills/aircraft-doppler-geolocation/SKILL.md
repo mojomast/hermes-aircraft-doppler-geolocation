@@ -29,6 +29,7 @@ broadband mode, a jet pass whose ground reflection makes a clear fringe pattern.
 ## Fast path (0.2.0+)
 
 1. `doppler_detect(recording)`: automatic flyover detection; inspect `detection.png`. Zero events means no usable tonal pass. By default the tools detect tonal events only. If the spectrogram shows broadband jet passes with ground-reflection fringes (evenly spaced bands that converge and widen around closest approach), rerun with `broadband: true` (see below); otherwise stop and say so.
+   When a tool result has a `media` list, copy each `MEDIA:<path>` line into your reply on its own line so the user sees the plots inline.
 2. `doppler_locate(recording, date_hint, region_hint="lat,lon,radius_km")`: needs a date (or file metadata) and a region. Returns best point, 68/95 % areas, matched aircraft, `heatmap.png`. If metadata contains GPS it is reported directly.
 3. Read `best.confidence` first. `ok` needs at least 2 events that consistently match an aircraft (`best.n_consistent_events`). With `low`, the report carries a `warning` and `credible_area_km2["95_low_conf"]` (the whole search disc): report the search region, not the point. Only with `ok` is `credible_area_km2["95"]` a usable 95 % region, and even then it is roughly calibrated (on held-out clips the only `ok` result was 13 km off).
 4. Report honestly: a broad posterior or one event is weak evidence. Use only on recordings the user has a right to analyse.

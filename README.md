@@ -91,6 +91,8 @@ The plugin registers one skill, `aircraft-doppler-geolocation:aircraft-doppler-g
 | `doppler_detect` | `recording` (required), `out_dir`, `broadband` (bool, default false) | none |
 | `doppler_locate` | `recording` (required), `date_hint` (`YYYY-MM-DD` or ISO datetime), `region_hint` (`lat,lon,radius_km`, ≤ 60 km), `offline` (bool), `time_tolerance_s` (default 600), `include_jets` (bool), `broadband` (bool, default false), `temper_extra` (number, default 4), `plots` (bool, default true), `cache` (bool, default true), `out_dir` | adsb.lol / GitHub, Copernicus DEM, Open-Meteo, unless `offline` |
 
+Both tools also return `media` (one `MEDIA:<absolute path>` line per PNG the run wrote), `generated_image` (the same paths) and `media_hint`. Hermes renders `MEDIA:` lines in the agent's reply as inline images or attachments, so the agent can show `detection.png` and `heatmap.png` to the user.
+
 `doppler_detect` returns `events` (per event: `kind` (`tonal`, or `broadband` when `broadband` is true), `t_cpa`, `f0_hz`, `speed_mps`, `cpa_slant_m`, `harmonics`, `snr_z`, `f_test`, `p_value`, plus `tau_max_s` and `T_s` for broadband events), `rejected_segments` with reasons, and `files.detection_png`.
 
 `doppler_locate` example output. This is a real run on the synthetic two-pass scenario from `tests/test_v02.py` (two Cessnas, injected tracks), trimmed:

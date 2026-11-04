@@ -6,6 +6,7 @@ Handlers return one JSON document. Heavy imports happen inside the handlers.
 from __future__ import annotations
 
 import json
+import os
 
 TOOL_NAMES = ("doppler_detect", "doppler_locate")
 
@@ -24,18 +25,54 @@ def _dump(payload) -> str:
     return json.dumps(payload, indent=2, sort_keys=True, default=str)
 
 
+MEDIA_HINT = (
+    "To show these plots to the user, copy each line in `media` into your "
+    "reply, on its own line (Hermes turns MEDIA:<path> lines into inline "
+    "images or attachments)."
+)
+
+
+def _with_media(rep):
+    """Add Hermes media fields for the PNGs a run wrote.
+
+    ``media`` holds one ``MEDIA:<absolute path>`` line per existing PNG in
+    ``files`` (detection first, then heatmap), ``generated_image`` the same
+    paths, so Hermes clients that index tool artifacts can preview them.
+    Nothing is added when no plot exists (``plots: false`` or an early error).
+    """
+    if not isinstance(rep, dict):
+        return rep
+    files = rep.get("files") or {}
+    order = ["detection_png", "heatmap_png"]
+    keys = order + sorted(k for k in files if k.endswith("_png") and k not in order)
+    paths = []
+    for key in keys:
+        value = files.get(key)
+        if value and os.path.isfile(value):
+            path = os.path.abspath(value)
+            if path not in paths:
+                paths.append(path)
+    if paths:
+        rep["generated_image"] = paths
+        rep["media"] = [f"MEDIA:{p}" for p in paths]
+        rep["media_hint"] = MEDIA_HINT
+    return rep
+
+
 def detect_tool(params, **_kwargs) -> str:
     try:
         args = _params(params)
         from .locate import detect_only
 
         return _dump(
-            detect_only(
-                str(args["recording"]),
-                args.get("out_dir") or None,
-                broadband=bool(args.get("broadband", False)),
-                plots=bool(args.get("plots", True)),
-                cache=bool(args.get("cache", True)),
+            _with_media(
+                detect_only(
+                    str(args["recording"]),
+                    args.get("out_dir") or None,
+                    broadband=bool(args.get("broadband", False)),
+                    plots=bool(args.get("plots", True)),
+                    cache=bool(args.get("cache", True)),
+                )
             )
         )
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
@@ -64,7 +101,7 @@ def locate_tool(params, **_kwargs) -> str:
             plots=bool(args.get("plots", True)),
             cache=bool(args.get("cache", True)),
         )
-        return _dump(rep)
+        return _dump(_with_media(rep))
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
         return _dump({"ok": False, "error": str(exc)})
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tools: `doppler_detect` and `doppler_locate` results now carry `media` (one `MEDIA:<absolute path>` line per PNG written: `detection.png`, `heatmap.png`), `generated_image` (the same paths) and a `media_hint`, so Hermes shows the plots inline or as attachments when the agent copies the MEDIA lines into its reply. The skill tells the agent to do that. Nothing is added with `plots: false` or on errors.
+
 ## 0.3.1 — 2026-11-03
 
 - CI: GitHub Actions workflow `checks` (pull requests and pushes to `main`): FFmpeg from apt, `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, offline test suite (network tests stay off). `pytest` and `ruff` (pinned 0.17.3) added to the `dev` extra; local commands in README "Development / checks".
