@@ -173,6 +173,11 @@ def run_one(args):
         ev, dur = events_for(entry, det_kw, work)
         ev = [e for e in ev if not e.likely_ground_vehicle]
         row["events"] = len(ev)
+        if not ev:
+            # nothing to score: skip ADS-B loading and track preparation
+            row["planes"] = None  # not evaluated (not "zero aircraft")
+            row["error"] = "no events"
+            return row
         T0 = float(entry["t0_unix"])
         lat0, lon0 = region_center(entry, offset_km)
         o = score.Options(**opt_kw)
@@ -182,8 +187,8 @@ def run_one(args):
         )
         pl = score.prepare_planes(tracks, lat0, lon0, include_jets=need_jets)
         row["planes"] = len(pl)
-        if not ev or not pl:
-            row["error"] = "no events" if not ev else "no planes"
+        if not pl:
+            row["error"] = "no planes"
             return row
 
         def ef(la, lo):
@@ -387,9 +392,6 @@ def main(argv=None):
             jobs.append(
                 (m, t, opt_kw, det_kw, str(out), a.radius_km, a.offset_km, a.heatmaps)
             )
-    # detection first (memory heavy: a 20 min clip spectrogram is ~2-3 GB), cached
-    with ProcessPoolExecutor(a.det_jobs, mp_context=ctx) as ex:
-        list(ex.map(_detect_job, [(m, det_kw, str(out)) for m in man]))
     # resumable: (id, tol) rows already in rows.jsonl are kept, not recomputed;
     # results are written as they complete, and one OOM-killed worker only
     # loses its own job (re-run the same command to retry it)
@@ -421,6 +423,16 @@ def main(argv=None):
                 file=sys.stderr,
             )
     jobs = [j for j in jobs if (j[0]["id"], float(j[1])) not in done]
+    # detection first (memory heavy: a 20 min clip spectrogram is ~2-3 GB), cached;
+    # only for clips that still have pending jobs, once per clip (det_kw is shared)
+    pending, seen = [], set()
+    for j in jobs:
+        if j[0]["id"] not in seen:
+            seen.add(j[0]["id"])
+            pending.append(j[0])
+    if pending:
+        with ProcessPoolExecutor(a.det_jobs, mp_context=ctx) as ex:
+            list(ex.map(_detect_job, [(m, det_kw, str(out)) for m in pending]))
     with open(rp, "w") as log:
         for r in rows:
             log.write(json.dumps(r) + "\n")

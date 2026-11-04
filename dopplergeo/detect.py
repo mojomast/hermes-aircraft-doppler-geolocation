@@ -106,8 +106,9 @@ def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
     k = max(3, int(round(12.0 / df)) | 1)
     base = ndimage.median_filter(L, size=(k, 1), mode="nearest")
     W = L - base
-    mad = np.median(np.abs(W - np.median(W, axis=0)), axis=0) * 1.4826 + 1e-6
-    Z = (W - np.median(W, axis=0)) / mad
+    med = np.median(W, axis=0)  # computed once, reused for the MAD and the centring
+    mad = np.median(np.abs(W - med), axis=0) * 1.4826 + 1e-6
+    Z = (W - med) / mad
     return f, t, Z, L
 
 
@@ -470,15 +471,15 @@ def detect_events(
     HS, _ = harmonic_sum(f, Z, f0_grid, kmax, fmax)
     # tones persist: a short running mean along time (0.75 s) lifts weak lines above noise
     HS = ndimage.uniform_filter1d(HS, size=3, axis=1) * np.sqrt(3)
-    ex = cfar(HS)
     # reward cells above the CFAR threshold, mildly penalise the rest
     # floor near zero so a track survives a few faint seconds through the steep CPA part
-    score = np.clip(ex, -0.35, 6.0)
+    # (clipped in place: the CFAR map itself is not needed afterwards)
+    masked = cfar(HS)
+    np.clip(masked, -0.35, 6.0, out=masked)
     max_jump = max(2, round(max_slope_hz_s * hop_s / 0.5))  # f0 grid step 0.5 Hz
     rejected = []
     cands = []  # dicts: t_start, t_end, snr, lines{k: (t, f, z)}
     # score * mask + (mask - 1) * 5, kept up to date in place: masked cells are -5
-    masked = score.copy()
     for _ in range(max_events * 3):
         segs = viterbi_segments(masked, max_jump)
         segs = [sg for sg in segs if (sg[1] - sg[0]) * hop_s >= min_duration_s]
@@ -539,6 +540,8 @@ def detect_events(
         "spectrogram": (f, t, L),
         "harmonic_sum": (f0_grid, HS),
     }
+    # tonal working arrays are not part of the diagnostics; free them before broadband
+    del Z, masked
     if broadband:
         from .broadband import detect_broadband
 
