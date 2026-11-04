@@ -606,8 +606,9 @@ def score_points(
                 else [0.0]
             )
         # close tonal passes that could charge the silence penalty
+        # (penalty computed once per pass; same expression, so bit-identical)
         quiet = [
-            (pi, rm, tr)
+            (pi, tr, opts.silence_penalty / 6.0 * silence_cost(rm, opts))
             for pi, _k, rm, tr in P
             if rm <= opts.r_silence_m and (opts.include_jets or tonal_pl[pi])
         ]
@@ -638,11 +639,11 @@ def score_points(
                     # as bad as a fit where every sample is an outlier (0.5 * 4^2 per effective sample)
                     tot -= miss[e_i]
             # silence: close tonal passes inside the clip that no event explains
-            for pi, rm, tr in quiet:
+            for pi, tr, pen in quiet:
                 if pi in used_pi:
                     continue
                 if T0h <= tr <= T0h + clip_dur:
-                    tot -= opts.silence_penalty / 6.0 * silence_cost(rm, opts)
+                    tot -= pen
             if tot > best[0]:
                 best = (tot, T0h, used)
         logl[i], t0[i] = best[0], (best[1] if best[1] is not None else np.nan)
