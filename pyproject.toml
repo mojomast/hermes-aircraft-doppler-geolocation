@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pyyaml>=6,<7"]
+dev = ["pyyaml>=6,<7", "pytest>=8,<10", "ruff==0.17.3"]
 fast = ["orjson>=3.9,<4"]
 
 [project.scripts]
@@ -36,3 +36,4 @@ include = ["dopplergeo*"]
 "__init__.py" = ["N999"]  # plugin entrypoint lives at the repo root by Hermes convention
 "dopplergeo/__main__.py" = ["N999"]  # repo dir name is not a module name
 "dopplergeo/*.py" = ["SIM115", "RUF046", "FURB162", "TRY004"]  # lazy openers; py3.10 fromisoformat; explicit int()
+"tests/ref_*_f65a6a2.py" = ["SIM115", "RUF046", "FURB162", "TRY004"]  # frozen copies of dopplergeo modules
