@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI: GitHub Actions workflow `checks` (pull requests and pushes to `main`): FFmpeg from apt, `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, offline test suite (network tests stay off). `pytest` and `ruff` (pinned 0.17.3) added to the `dev` extra; local commands in README "Development / checks".
+
 Efficiency pass; the changes below only remove repeated work. On the 7 tune clips checked (see PR #5), events, every search level's log-likelihoods, start times, matches, best point, credible areas and coverage are bit-identical to 0.3.0 (max observed difference 0). An earlier revision of this branch differed on man_hg0903 (events up to ~3e-5 relative): that came from the vectorised broadband Viterbi accumulating float32 scores in float32, not from the detrend, and is fixed (float64 accumulation as in 0.3.0).
 
 - Event cache shared by `detect`, `locate` and the eval harness (`dopplergeo/evcache.py`): keyed by audio content hash, decode rate, detector settings and detector source hash; atomic writes, corrupt or mismatched entries are misses, LRU pruning. Changing region, date, tolerance or scorer options no longer repeats detection. `--no-cache` / `cache: false` to bypass. Reports carry `detection_cache.hit`.

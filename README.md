@@ -320,9 +320,21 @@ Use for forensics, journalism, research, or auditing your own recordings. Locati
 ## Tests
 
 ```bash
-pip install -e ".[dev]" pytest   # needs ffmpeg on PATH
+pip install -e ".[dev]"           # pytest, ruff (pinned), pyyaml; needs ffmpeg on PATH
 python3 -m pytest tests -q        # network tests run only with DOPPLER_GEO_NETWORK_TESTS=1
 ruff check . && ruff format --check .
+```
+
+### Development / checks
+
+CI (`.github/workflows/checks.yml`) runs on every pull request and on pushes to `main`, on Python 3.11 with FFmpeg from apt. The same checks locally:
+
+```bash
+sudo apt-get install ffmpeg       # or your platform's package
+python3 -m pip install -e ".[dev]"
+ruff check .
+ruff format --check .
+python3 -m pytest tests -q        # offline; leave DOPPLER_GEO_NETWORK_TESTS unset
 ```
 
 `tests/test_cli_flags.py` covers the `--broadband` / `--temper-extra` flags and tool parameters, and the offline error message. `tests/test_broadband.py` covers the synthetic broadband pass (geometry recovered for 1.5 m and 5 m mic heights), noise-only and steady-tone negatives, the scorer picking the true point, and tonal events ignoring jets.
