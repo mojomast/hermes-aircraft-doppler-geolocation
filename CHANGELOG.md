@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Small efficiency pass (results bit-identical to f65a6a2 on the tune clips checked; see the PR):
+
+- Detection: `whitened_spectrogram()` computes the per-frame median once; `detect_events()` clips the CFAR map in place instead of keeping `ex`, `score` and `masked` copies, and frees the whitened spectrogram and masked score before broadband detection. float64 throughout; `detection.png` diagnostics unchanged.
+- Scoring: `score_points()` computes each nearby pass's silence penalty once per point instead of once per start-time hypothesis (same expression and order, bit-identical).
+- Eval harness: clips with no usable events return before ADS-B loading and track preparation, with `planes` reported as `null` (not evaluated) instead of 0; `--resume` identities are checked before detection, and detection runs only for clips with pending jobs, once per clip.
+
 Efficiency pass; the changes below only remove repeated work. On the 7 tune clips checked (see PR #5), events, every search level's log-likelihoods, start times, matches, best point, credible areas and coverage are bit-identical to 0.3.0 (max observed difference 0). An earlier revision of this branch differed on man_hg0903 (events up to ~3e-5 relative): that came from the vectorised broadband Viterbi accumulating float32 scores in float32, not from the detrend, and is fixed (float64 accumulation as in 0.3.0).
 
 - Event cache shared by `detect`, `locate` and the eval harness (`dopplergeo/evcache.py`): keyed by audio content hash, decode rate, detector settings and detector source hash; atomic writes, corrupt or mismatched entries are misses, LRU pruning. Changing region, date, tolerance or scorer options no longer repeats detection. `--no-cache` / `cache: false` to bypass. Reports carry `detection_cache.hit`.
