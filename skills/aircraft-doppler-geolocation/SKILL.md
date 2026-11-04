@@ -5,7 +5,7 @@ description: >-
   curves matched against ADS-B flight tracks. Use when the user wants to find
   where or when a clip was recorded from background plane sound, or to audit
   their own recording for location leakage.
-version: "0.3.0"
+version: "0.3.1"
 author: mojomast
 license: MIT
 compatibility: >-

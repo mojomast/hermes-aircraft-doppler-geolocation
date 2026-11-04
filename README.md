@@ -6,7 +6,7 @@ It is a community plugin by [Kyle Durepos](https://github.com/mojomast). It is n
 
 ![Catalog banner](docs/catalog-banner.png)
 
-**Status:** 0.3.0, released 2026-11-03 (tag `v0.3.0`). It locates clean multi-pass recordings to within about 1 km but mostly fails on unseen clips: 2 of 18 held-out runs came in under 3 km. Read [Real-world results](#real-world-results) before you trust any output.
+**Status:** 0.3.1, released 2026-11-03 (tag `v0.3.1`). It locates clean multi-pass recordings to within about 1 km but mostly fails on unseen clips: 2 of 18 held-out runs came in under 3 km. Read [Real-world results](#real-world-results) before you trust any output.
 
 Contents: [Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Hermes tools](#hermes-tools) · [How it works](#how-it-works) · [Data sources and licences](#data-sources-and-licences) · [Evaluation](#evaluation-harness) · [Real-world results](#real-world-results) · [Limitations](#limitations) · [Privacy and ethics](#privacy-and-ethics)
 

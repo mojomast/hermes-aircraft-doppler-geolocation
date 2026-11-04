@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-11-03
 
 - CI: GitHub Actions workflow `checks` (pull requests and pushes to `main`): FFmpeg from apt, `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, offline test suite (network tests stay off). `pytest` and `ruff` (pinned 0.17.3) added to the `dev` extra; local commands in README "Development / checks".
 

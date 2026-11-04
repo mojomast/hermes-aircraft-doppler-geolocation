@@ -1,5 +1,5 @@
 name: aircraft-doppler-geolocation
-version: "0.3.0"
+version: "0.3.1"
 description: >-
   Detect aircraft flyovers in a recording (Doppler tones, plus experimental
   ground-reflection broadband events) and estimate where it was made by

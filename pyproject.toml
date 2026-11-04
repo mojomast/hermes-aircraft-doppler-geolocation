@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-aircraft-doppler-geolocation"
-version = "0.3.0"
+version = "0.3.1"
 description = "Hermes plugin: geolocate recordings from aircraft Doppler curves and ADS-B tracks."
 readme = "README.md"
 requires-python = ">=3.11"
