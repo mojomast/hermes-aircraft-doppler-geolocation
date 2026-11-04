@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI: GitHub Actions workflow `checks` (pull requests and pushes to `main`): FFmpeg from apt, `pip install -e ".[dev]"`, `ruff check`, `ruff format --check`, offline test suite (network tests stay off). `pytest` and `ruff` (pinned 0.17.3) added to the `dev` extra; local commands in README "Development / checks".
+
 Small efficiency pass (results bit-identical to f65a6a2 on the tune clips checked; see the PR):
 
 - Detection: `whitened_spectrogram()` computes the per-frame median once; `detect_events()` clips the CFAR map in place instead of keeping `ex`, `score` and `masked` copies, and frees the whitened spectrogram and masked score before broadband detection. float64 throughout; `detection.png` diagnostics unchanged.
