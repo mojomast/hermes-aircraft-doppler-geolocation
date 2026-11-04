@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Tools: `doppler_detect` and `doppler_locate` results now carry `media` (one `MEDIA:<absolute path>` line per PNG written: `detection.png`, `heatmap.png`), `generated_image` (the same paths) and a `media_hint`, so Hermes shows the plots inline or as attachments when the agent copies the MEDIA lines into its reply. The skill tells the agent to do that. Nothing is added with `plots: false` or on errors.
+- Packaging: `ruff` is no longer in the `dev` extra (its exact pin conflicted with Hermes core's pin, so `hermes plugins install` refused the plugin). CI and the README install `ruff==0.17.3` explicitly.
 
 ## 0.3.1 — 2026-11-03
 

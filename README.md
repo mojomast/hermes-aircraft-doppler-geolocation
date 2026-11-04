@@ -322,7 +322,7 @@ Use for forensics, journalism, research, or auditing your own recordings. Locati
 ## Tests
 
 ```bash
-pip install -e ".[dev]"           # pytest, ruff (pinned), pyyaml; needs ffmpeg on PATH
+pip install -e ".[dev]" "ruff==0.17.3"   # pytest, pyyaml, ruff (pinned, kept out of the extra); needs ffmpeg on PATH
 python3 -m pytest tests -q        # network tests run only with DOPPLER_GEO_NETWORK_TESTS=1
 ruff check . && ruff format --check .
 ```
@@ -333,7 +333,7 @@ CI (`.github/workflows/checks.yml`) runs on every pull request and on pushes to 
 
 ```bash
 sudo apt-get install ffmpeg       # or your platform's package
-python3 -m pip install -e ".[dev]"
+python3 -m pip install -e ".[dev]" "ruff==0.17.3"
 ruff check .
 ruff format --check .
 python3 -m pytest tests -q        # offline; leave DOPPLER_GEO_NETWORK_TESTS unset
