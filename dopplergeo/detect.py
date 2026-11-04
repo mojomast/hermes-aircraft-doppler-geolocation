@@ -106,8 +106,9 @@ def whitened_spectrogram(x, sr=SR, win_s=2.0, hop_s=0.25, fmax=1000.0):
     k = max(3, int(round(12.0 / df)) | 1)
     base = ndimage.median_filter(L, size=(k, 1), mode="nearest")
     W = L - base
-    mad = np.median(np.abs(W - np.median(W, axis=0)), axis=0) * 1.4826 + 1e-6
-    Z = (W - np.median(W, axis=0)) / mad
+    med = np.median(W, axis=0)  # computed once, reused for the MAD and the centring
+    mad = np.median(np.abs(W - med), axis=0) * 1.4826 + 1e-6
+    Z = (W - med) / mad
     return f, t, Z, L
 
 
