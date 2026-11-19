@@ -874,7 +874,12 @@ def score_points(
     clip_dur=None,
     prepared=None,
 ):
-    """Joint log-likelihood per grid point. t0_window=(lo, hi) unix bounds on recording start."""
+    """Joint log-likelihood per grid point, with hard shared-recording-start bounds.
+
+    t0_window=(lo, hi) constrains the returned shared clock. Individual event
+    fits may lie up to opts.dt_tol_s outside it, retaining clock-agreement slack
+    for events at a boundary without expanding the requested search window.
+    """
     passes = find_passes(planes, gxyz, opts, c)
     n = len(gxyz)
     logl = np.full(n, -np.inf)
@@ -888,8 +893,10 @@ def score_points(
     uniform = [_kin(pl) for pl in planes]
     # widest slice any event needs around a CPA sample (prediction window)
     wmax = max((int(p.half_pred) + 120 for p in pes), default=0)
-    t0lo = t0_window[0] - opts.dt_tol_s if t0_window else None
-    t0hi = t0_window[1] + opts.dt_tol_s if t0_window else None
+    # Individual fits retain agreement slack; shared-clock hypotheses below
+    # remain bounded by the original requested window.
+    fit_t0lo = t0_window[0] - opts.dt_tol_s if t0_window else None
+    fit_t0hi = t0_window[1] + opts.dt_tol_s if t0_window else None
     for i in range(n):
         P = passes[i]
         if not P:
@@ -914,7 +921,7 @@ def score_points(
                     continue  # jets are only loaded for broadband events
                 T0c = tr - pe.t_cpa
                 if t0_window and not (
-                    t0lo - opts.cpa_search_s <= T0c <= t0hi + opts.cpa_search_s
+                    fit_t0lo - opts.cpa_search_s <= T0c <= fit_t0hi + opts.cpa_search_s
                 ):
                     continue
                 pl = planes[pi]
@@ -951,7 +958,7 @@ def score_points(
                         pred, pl, g, c=c, k_cpa=k, half_window_s=pe.half_pred
                     )
                 ll, T0, sc = _fit_event_phase(
-                    pe, predict, T0c, opts, (t0lo, t0hi) if t0_window else None
+                    pe, predict, T0c, opts, (fit_t0lo, fit_t0hi) if t0_window else None
                 )
                 if np.isfinite(ll):
                     ll += cpa_consistency(ev, rm, opts)
@@ -976,13 +983,13 @@ def score_points(
             quiet,
             opts.dt_tol_s,
             clip_dur,
-            (t0lo, t0hi) if t0_window else None,
+            t0_window,
         )
         canonical_cache = {}
         best = (-np.inf, None, None)
         best_agreement = np.inf
         for T0h in hyps:
-            if t0_window and not (t0lo <= T0h <= t0hi):
+            if t0_window and not (t0_window[0] <= T0h <= t0_window[1]):
                 continue
             eligible = [
                 _canonical_candidates(
@@ -1015,7 +1022,7 @@ def score_points(
             )
             agreement = sum((candidate.t0 - T0h) ** 2 for _, candidate in used)
             if not used:
-                agreement = (T0h - ((t0lo + t0hi) / 2 if t0_window else 0)) ** 2
+                agreement = (T0h - (sum(t0_window) / 2 if t0_window else 0)) ** 2
             if tot > best[0] or (tot == best[0] and agreement < best_agreement):
                 best = (tot, T0h, used)
                 best_agreement = agreement

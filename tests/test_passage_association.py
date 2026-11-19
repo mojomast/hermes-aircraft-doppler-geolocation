@@ -223,6 +223,33 @@ def test_clock_boundary_fit_is_finite_without_rounding_outside_window():
         [observation(plane, passage, start - 8)], [plane], start, silence_penalty=0
     )
     assert np.isfinite(result.logl[0]) and np.isfinite(result.t0[0])
+    assert start - 0.1 <= result.t0[0] <= start + 0.1
+
+
+@pytest.mark.parametrize("offset", [-5, 5])
+@pytest.mark.parametrize("half_width", [0, 0.1])
+def test_shared_clock_respects_requested_bounds_with_individual_fit_slack(
+    offset, half_width
+):
+    plane = repeated_track()
+    passage = pass_near(plane, 150)
+    start = passage[3] - 100
+    bounds = (start - half_width, start + half_width)
+    result = score.score_points(
+        [observation(plane, passage, start + offset)],
+        [plane],
+        np.zeros((1, 3)),
+        C,
+        score.Options(silence_penalty=0),
+        bounds,
+        500,
+    )
+    assert bounds[0] <= result.t0[0] <= bounds[1]
+    assert score.n_consistent_matches(result.matches[0]) == 1
+    fitted = result.matches[0][0]["recording_start_unix"]
+    # Preserve individual-event clock jitter at a hard shared-clock boundary.
+    assert fitted - start == pytest.approx(offset, abs=0.3)
+    assert abs(fitted - result.t0[0]) <= 6
 
 
 def test_dense_marginal_component_has_an_explicit_state_budget():
