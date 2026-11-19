@@ -1,11 +1,12 @@
 """Hermetic regressions for distinct encounters, joint assignment and CPA bias."""
 
+import copy
 import itertools
 
 import numpy as np
 import pytest
 
-from dopplergeo import score
+from dopplergeo import detect, score
 from dopplergeo.detect import Event
 
 C = 343.0
@@ -114,6 +115,126 @@ def test_inbound_track_endpoint_is_not_an_observed_cpa():
     pos = np.c_[-6000 + 60 * t, np.zeros_like(t), np.full_like(t, 1000)]
     pl = score.Plane("inbound", "piston", t, pos)
     assert score.find_passes([pl], np.zeros((1, 3)), score.Options(), C) == [[]]
+
+
+def test_broad_phase_neighbor_alias_cannot_duplicate_one_accepted_pass():
+    t = np.arange(-100.0, 401.0)
+    angle = 2 * np.pi * t / 50
+    plane = score.Plane(
+        "circling",
+        "piston",
+        t,
+        np.c_[1000 + 400 * np.cos(angle), 400 * np.sin(angle), np.full_like(t, 800)],
+    )
+    passage = pass_near(plane, 150)
+    start = passage[3] - 100
+    times = np.arange(90, 110.01, 0.5)
+    ratio = score.predicted_ratio(plane, np.zeros(3), start + times, C, passage[1], 120)
+    event, reason = detect._accept(
+        {
+            "lines": {1: (times, 80 * ratio, 10 * np.ones_like(times))},
+            "t_start": 90,
+            "t_end": 110,
+            "snr": 15,
+        },
+        C,
+        0.5,
+        2,
+        1e-4,
+    )
+    assert event is not None, reason
+    assert event.straight_fit_ok and not event.likely_ground_vehicle
+    result = score_at_clock(
+        [event, copy.deepcopy(event)], [plane], start, silence_penalty=0
+    )
+    assert score.n_consistent_matches(result.matches[0]) == 1
+    assert len(result.matches[0]) == 1
+    assert start + 90 <= result.matches[0][0]["cpa_receive_unix"] <= start + 110
+
+
+def test_support_spanning_multiple_minima_is_explicitly_confidence_ambiguous():
+    t = np.arange(-100.0, 401.0)
+    angle = 2 * np.pi * t / 50
+    plane = score.Plane(
+        "circling",
+        "piston",
+        t,
+        np.c_[1000 + 400 * np.cos(angle), 400 * np.sin(angle), np.full_like(t, 800)],
+    )
+    passage = pass_near(plane, 150)
+    start = passage[3] - 100
+    event = observation(plane, passage, start)
+    event.times = np.arange(90, 170.01, 0.5).tolist()
+    event.t_start, event.t_end = 90, 170
+    event.ratio = score.predicted_ratio(
+        plane, np.zeros(3), start + np.asarray(event.times), C, passage[1], 180
+    ).tolist()
+    result = score_at_clock([event], [plane], start, silence_penalty=0)
+    assert len(result.matches[0]) == 1
+    assert result.matches[0][0]["multiple_cpas_in_support"] is True
+    assert score.n_consistent_matches(result.matches[0]) == 0
+
+
+def test_shared_clock_interval_is_found_without_an_optional_seed():
+    plane = repeated_track()
+    a, b, c = [pass_near(plane, when) for when in (150, 450, 750)]
+    start = a[3] - 100
+    ordinary = [observation(plane, a, start), observation(plane, b, start + 10)]
+    optional = observation(plane, c, start + 5)
+    optional.likely_ground_vehicle = True
+    options = score.Options(silence_penalty=0)
+
+    def evaluate(events):
+        return score.score_points(
+            events,
+            [plane],
+            np.zeros((1, 3)),
+            C,
+            options,
+            (start - 20, start + 20),
+            1000,
+        )
+
+    baseline, supported = evaluate(ordinary), evaluate([*ordinary, optional])
+    assert score.n_consistent_matches(baseline.matches[0]) == 2
+    assert supported.logl[0] - baseline.logl[0] <= np.logaddexp(0, 1) + 1e-10
+
+
+def test_clock_boundary_fit_is_finite_without_rounding_outside_window():
+    plane = repeated_track()
+    passage = pass_near(plane, 150)
+    start = passage[3] - 100
+    result = score_at_clock(
+        [observation(plane, passage, start - 8)], [plane], start, silence_penalty=0
+    )
+    assert np.isfinite(result.logl[0]) and np.isfinite(result.t0[0])
+
+
+def test_dense_marginal_component_has_an_explicit_state_budget():
+    events = [
+        [score._Candidate(1, 0, aircraft, 10, 1000, 1, 0) for aircraft in range(6)]
+        for _ in range(6)
+    ]
+    with pytest.raises(score.AssociationBudgetError, match="state budget"):
+        score._joint_association(events, [5] * 6, {}, True, state_budget=16)
+
+
+def test_map_assignment_uses_polynomial_path_for_a_large_dense_component():
+    events = [
+        [score._Candidate(1, 0, aircraft, 10, 1000, 1, 0) for aircraft in range(40)]
+        for _ in range(40)
+    ]
+    value, matches = score._joint_association(
+        events, [5] * 40, {}, False, state_budget=1
+    )
+    assert value == 40 and len(matches) == 40
+    assert len({c.occurrence for _, c in matches}) == 40
+
+
+@pytest.mark.parametrize("budget", [0, -1, np.inf, True])
+def test_association_state_budget_is_a_positive_integer(budget):
+    with pytest.raises(ValueError, match="association_state_budget"):
+        score.Options(association_state_budget=budget)
 
 
 def test_joint_map_and_marginal_match_exhaustive_assignments():

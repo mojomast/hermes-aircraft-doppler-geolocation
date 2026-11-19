@@ -192,10 +192,11 @@ def locate(
         )
         rep["files"]["detection_png"] = str(out / "detection.png")
     del diag
-    aircraft_events = [e for e in events if not e.likely_ground_vehicle]
-    if len(aircraft_events) < len(events):
+    aircraft_events = events
+    n_ground_like = sum(e.likely_ground_vehicle for e in events)
+    if n_ground_like:
         notes.append(
-            f"{len(events) - len(aircraft_events)} slow event(s) (< 35 m/s) set aside as likely road vehicles."
+            f"{n_ground_like} low-fit-speed event(s) (< 35 m/s) retained as bounded optional evidence; the ground-like flag is not an aircraft veto."
         )
     rep.update(
         duration_s=clip_dur,
@@ -212,6 +213,13 @@ def locate(
     opts = score.Options(
         include_jets=include_jets, cpa_search_s=float(cpa_search_s), **okw
     )
+    rep["event_policy"] = {
+        "ground_like": "bounded-optional",
+        "ground_like_miss_cost": opts.ground_like_miss_cost,
+        "ground_like_candidate_mixture": "uniform",
+        "ground_like_geometry_prior": "ignored; actual-track audibility and curve quality still required",
+        "association": "conditional best-shape assignment; ground-like flags preserved",
+    }
     day_start = dt.datetime(day.year, day.month, day.day, tzinfo=dt.UTC).timestamp()
     if when is not None:
         t0w = (when.timestamp() - time_tolerance_s, when.timestamp() + time_tolerance_s)
@@ -278,19 +286,24 @@ def locate(
         dem_src["src"] = s
         return z
 
-    res = score.search(
-        aircraft_events,
-        planes,
-        lat0,
-        lon0,
-        rad_km * 1000,
-        elev,
-        c,
-        opts,
-        t0_window=t0w,
-        clip_dur=clip_dur,
-        progress=progress,
-    )
+    try:
+        res = score.search(
+            aircraft_events,
+            planes,
+            lat0,
+            lon0,
+            rad_km * 1000,
+            elev,
+            c,
+            opts,
+            t0_window=t0w,
+            clip_dur=clip_dur,
+            progress=progress,
+        )
+    except score.AssociationBudgetError as exc:
+        rep["error"] = str(exc)
+        rep["association_state_budget"] = opts.association_state_budget
+        return _finish(rep, out)
     rep["dem"] = dem_src["src"]
     best = res["best"]
     if best is None or not np.isfinite(best["logl"]):

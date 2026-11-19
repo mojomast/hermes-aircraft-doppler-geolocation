@@ -13,10 +13,12 @@ event. Search is coarse-to-fine over a local ENU grid.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
+from itertools import pairwise
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 
 from .physics import R_E
@@ -55,6 +57,9 @@ class Options:
     # confidence interval; enlarge it explicitly for more asymmetric passes.
     cpa_search_s: float = 60.0
     cpa_step_s: float = 2.0  # coarse phase proposals; dt_step_s refines the best
+    # Low fitted speed is a heuristic, not an aircraft veto. Unexplained
+    # road-like tones receive only this explicit weak-evidence budget.
+    ground_like_miss_cost: float = 1.0
     # extra posterior temper on top of the Birge ratio (calibrated on real clips so
     # 95% regions contain the truth ~95% of the time; 1.0 = uncalibrated)
     temper_extra: float = 4.0
@@ -77,6 +82,7 @@ class Options:
     # commentary/music (low recall) is not pushed away from busy traffic.
     detect_prob: float = 0.15
     marginalize: bool = True  # sum, not max, over candidate aircraft per event
+    association_state_budget: int = 4096  # exact states per conflict component
     span_tol: float = 0.05  # prefilter: |log Doppler span(pred/obs)| allowed
     # CPA-distance consistency: the event's own fitted CPA slant vs the pass's
     # slant range at CPA, Gaussian in log-ratio (detector range estimates are
@@ -95,6 +101,17 @@ class Options:
             raise ValueError("cpa_search_s must be finite and non-negative")
         if not np.isfinite(self.cpa_step_s) or self.cpa_step_s <= 0:
             raise ValueError("cpa_step_s must be finite and positive")
+        if (
+            not np.isfinite(self.ground_like_miss_cost)
+            or self.ground_like_miss_cost < 0
+        ):
+            raise ValueError("ground_like_miss_cost must be finite and non-negative")
+        if (
+            isinstance(self.association_state_budget, bool)
+            or not isinstance(self.association_state_budget, (int, np.integer))
+            or self.association_state_budget < 1
+        ):
+            raise ValueError("association_state_budget must be a positive integer")
 
 
 @dataclass
@@ -113,24 +130,52 @@ class _Candidate:
     r_min: float
     scale: float
     chi2nu: float
+    mixture_logprior: float = 0.0
+    multiple_cpas_in_support: bool = False
 
     @property
     def occurrence(self):
         return self.plane_idx, self.k_cpa
 
 
-def _joint_association(per_event, miss, quiet, marginalize):
+class AssociationBudgetError(ValueError):
+    """Exact marginal association exceeded its declared computational budget."""
+
+
+def _joint_association(per_event, miss, quiet, marginalize, state_budget=4096):
     """Marginal likelihood and MAP association with one use per occurrence.
 
     Private candidates factorize. Only occurrences shared by multiple events
     need the sparse subset DP. This sums valid joint assignments rather than
     making an event-order-dependent greedy choice. A matched occurrence also
     explains its own silence penalty, not every pass of the same aircraft.
+    Optional events marginalize a uniform nuisance proposal index. That index
+    also exists under their null, so its common prior cancels in the returned
+    conditional best-shape assignment. Ambiguous support is not an identity.
     """
     by_occurrence = {}
     for ei, candidates in enumerate(per_event):
         for candidate in candidates:
             by_occurrence.setdefault(candidate.occurrence, {})[ei] = candidate
+    if not marginalize:
+        # Polynomial MAP path: each occurrence can be used once and each event
+        # has a private null dummy. No exponential subset DP is necessary.
+        if not per_event:
+            return -sum(quiet.values()), []
+        keys = sorted(by_occurrence)
+        values = np.full((len(per_event), len(keys) + len(per_event)), -np.inf)
+        for col, key in enumerate(keys):
+            for ei, candidate in by_occurrence[key].items():
+                values[ei, col] = candidate.logl + quiet.get(key, 0.0)
+        for ei, cost in enumerate(miss):
+            values[ei, len(keys) + ei] = -cost
+        rows, columns = linear_sum_assignment(-values)
+        selected = [
+            (int(ei), by_occurrence[keys[col]][int(ei)])
+            for ei, col in zip(rows, columns)
+            if col < len(keys)
+        ]
+        return float(values[rows, columns].sum()) - sum(quiet.values()), selected
     shared = {
         key: choices for key, choices in by_occurrence.items() if len(choices) > 1
     }
@@ -142,7 +187,16 @@ def _joint_association(per_event, miss, quiet, marginalize):
         ]
         value, choice = max(alternatives, key=lambda pair: pair[0])
         base_map.append(value)
-        base_log.append(float(np.logaddexp.reduce([v for v, _ in alternatives])))
+        base_log.append(
+            float(
+                np.logaddexp.reduce(
+                    [
+                        value + (choice.mixture_logprior if choice is not None else 0.0)
+                        for value, choice in alternatives
+                    ]
+                )
+            )
+        )
         if choice is not None:
             selected[ei] = choice
     # Factor connected conflict components. Twenty unrelated conflicting pairs
@@ -179,8 +233,16 @@ def _joint_association(per_event, miss, quiet, marginalize):
                     bit = 1 << ei
                     if mask & bit:
                         continue
+                    if mask | bit not in updated and len(updated) >= state_budget:
+                        raise AssociationBudgetError(
+                            f"exact association state budget ({state_budget}) exceeded; "
+                            "increase Options.association_state_budget or use "
+                            "Options(marginalize=False) for polynomial MAP assignment"
+                        )
                     value = candidate.logl + quiet.get(occurrence, 0.0)
-                    new_log = logmass + value - base_log[ei]
+                    new_log = (
+                        logmass + value + candidate.mixture_logprior - base_log[ei]
+                    )
                     new_best = best + value - base_map[ei]
                     old_log, old_best, old_path = updated.get(
                         mask | bit, (-np.inf, -np.inf, {})
@@ -489,6 +551,9 @@ class _PrepEvent:
         self.n = len(ev.times)
         self.t_cpa = ev.t_cpa
         self.span_tm = (self.times.max() - self.times.min()) if self.n else 0.0
+        self.support_lo = float(self.times.min()) if self.n else self.t_cpa
+        self.support_hi = float(self.times.max()) if self.n else self.t_cpa
+        self.support_mid = (self.support_lo + self.support_hi) / 2
         self.half_span = (ev.times[-1] - ev.times[0]) / 2 if self.n else 0.0
         self.obs_span = _obs_span(ev)
 
@@ -524,7 +589,7 @@ class _PassGeom:
     (the velocity at a slice end is the one-sided difference np.gradient uses).
     """
 
-    __slots__ = ("D", "c", "d", "lo", "pl", "r", "se", "trecv")
+    __slots__ = ("D", "c", "d", "lo", "minima", "pl", "r", "se", "trecv")
 
     def __init__(self, pl, g, k, w, c):
         n = len(pl.tau)
@@ -537,6 +602,7 @@ class _PassGeom:
             self.D = c / (c - vr)
         self.d, self.r = d, r
         self.trecv = pl.tau[lo:hi] + r / c
+        self.minima = _range_minima(pl.tau[lo:hi], r, c, lo)
         self.se = np.clip(d[:, 2] / np.maximum(r, 1.0), 0.0, 1.0)
 
     def _D(self, lo, hi):
@@ -596,7 +662,10 @@ def event_weight(ev, opts: Options) -> float:
 
 def cpa_consistency(ev, r_pass_m, opts: Options) -> float:
     """Log-likelihood term: event CPA-slant estimate vs pass slant at CPA."""
-    if opts.cpa_weight <= 0:
+    # Low fitted speed and slant can be coupled artifacts of fitting a turn
+    # with a straight pass. Optional ground-like support therefore uses the
+    # actual track's audibility and curve, not that uncertain distance prior.
+    if opts.cpa_weight <= 0 or getattr(ev, "likely_ground_vehicle", False):
         return 0.0
     d_ev = getattr(ev, "cpa_slant_m", None)
     if d_ev is None or not np.isfinite(d_ev) or r_pass_m is None:
@@ -618,15 +687,19 @@ def miss_cost(ev, opts: Options) -> float:
     w = event_weight(ev, opts)
     full = 8.0 * w * len(ev.times)
     if not opts.miss_null:
-        return opts.miss_penalty * full
-    o = np.asarray(ev.ratio, float)
-    o = o[np.isfinite(o)]
-    if len(o) == 0:
-        return 0.0
-    sigma = event_sigma(ev, opts)
-    res = np.clip(o - np.median(o), -4 * sigma, 4 * sigma)
-    null = 0.5 * float((res**2).sum()) / sigma**2 * w
-    return opts.miss_penalty * min(null, full)
+        cost = opts.miss_penalty * full
+    else:
+        o = np.asarray(ev.ratio, float)
+        o = o[np.isfinite(o)]
+        if len(o) == 0:
+            return 0.0
+        sigma = event_sigma(ev, opts)
+        res = np.clip(o - np.median(o), -4 * sigma, 4 * sigma)
+        null = 0.5 * float((res**2).sum()) / sigma**2 * w
+        cost = opts.miss_penalty * min(null, full)
+    if getattr(ev, "likely_ground_vehicle", False):
+        cost = min(cost, opts.ground_like_miss_cost)
+    return cost
 
 
 def silence_cost(rm, opts: Options) -> float:
@@ -660,6 +733,120 @@ def _pass_span(pl, g, k, half, c):
 def prepare_events(events):
     """Option-free event arrays for score_points(prepared=...), built once per search."""
     return [_PrepEvent(e) for e in events]
+
+
+def _range_minima(tau, distance, c, offset=0):
+    indices = (
+        np.flatnonzero(
+            (distance[1:-1] < distance[:-2]) & (distance[1:-1] <= distance[2:])
+        )
+        + 1
+    )
+    return {
+        int(k + offset): (float(distance[k]), float(tau[k] + distance[k] / c))
+        for k in indices
+    }
+
+
+def _clock_hypotheses(
+    per_event, prepared, catalogs, quiet, tolerance, clip_dur, bounds
+):
+    """Represent every region of the finite candidate model without rounding.
+
+    Eligibility, silence, canonical occurrence and ambiguity only change at
+    these boundaries. Include boundaries and interiors, plus fitted clock
+    centres for a stable representative when a whole region has equal score.
+    """
+    points = []
+    for candidates, pe in zip(per_event, prepared):
+        for candidate in candidates:
+            points.extend(
+                (candidate.t0 - tolerance, candidate.t0, candidate.t0 + tolerance)
+            )
+        for pi in {candidate.plane_idx for candidate in candidates}:
+            times = [received for _, (_, received) in catalogs[pi]]
+            points.extend(
+                (left + right) / 2 - pe.support_mid for left, right in pairwise(times)
+            )
+            for received in times:
+                points.extend((received - pe.support_lo, received - pe.support_hi))
+    for _, received, _ in quiet:
+        points.extend((received - clip_dur, received))
+    if bounds is not None:
+        lo, hi = bounds
+    elif points:
+        lo, hi = min(points) - 1, max(points) + 1
+    else:
+        return [0.0]
+    edges = sorted({float(v) for v in points if lo <= v <= hi} | {float(lo), float(hi)})
+    return sorted(
+        set(edges + [(a + b) / 2 for a, b in pairwise(edges)] + [(lo + hi) / 2])
+    )
+
+
+def _canonical_candidates(candidates, pe, start, catalogs, planes, g, c, opts, cache):
+    """Bind proposals to actual support at the shared clock, then deduplicate.
+
+    Midpoint territory is a proposal convention, not transition identification.
+    Support spanning multiple audible minima is explicitly confidence-ambiguous.
+    """
+    selected = {}
+    for candidate in candidates:
+        if not candidate.t0 - opts.dt_tol_s <= start <= candidate.t0 + opts.dt_tol_s:
+            continue
+        minima = catalogs[candidate.plane_idx]
+        key, (distance, _received) = min(
+            minima,
+            key=lambda row: (abs(row[1][1] - (start + pe.support_mid)), row[1][1]),
+        )
+        if distance >= opts.r_max_m:
+            continue
+        cache_key = (id(pe), candidate.plane_idx, candidate.k_cpa, candidate.t0, key)
+        cooked = cache.get(cache_key)
+        if cooked is None:
+            if key != candidate.k_cpa:
+                predict = predicted_sin_elev if pe.bb else predicted_ratio
+                times = np.array([candidate.t0])
+                D = predict(
+                    planes[candidate.plane_idx],
+                    g,
+                    times[:, None] + pe.times[None],
+                    c,
+                    key,
+                    pe.half_pred,
+                )
+                ll, _, scale = _loglik_from_pred(pe, D, times, opts)
+            else:
+                ll = candidate.logl - cpa_consistency(pe.ev, candidate.r_min, opts)
+                scale = candidate.scale
+            if not np.isfinite(ll):
+                continue
+            ll += cpa_consistency(pe.ev, distance, opts)
+            cooked = replace(
+                candidate,
+                k_cpa=key,
+                r_min=distance,
+                logl=ll,
+                scale=scale,
+                chi2nu=-2 * ll / pe.chi2_den,
+            )
+            cache[cache_key] = cooked
+        ambiguous = (
+            sum(
+                start + pe.support_lo <= when <= start + pe.support_hi
+                and radius < opts.r_max_m
+                for _, (radius, when) in minima
+            )
+            > 1
+        )
+        cooked = replace(cooked, multiple_cpas_in_support=ambiguous)
+        old = selected.get(cooked.occurrence)
+        if old is None or (cooked.logl, -abs(cooked.t0 - start)) > (
+            old.logl,
+            -abs(old.t0 - start),
+        ):
+            selected[cooked.occurrence] = cooked
+    return list(selected.values())
 
 
 def score_points(
@@ -698,6 +885,10 @@ def score_points(
             continue
         g = gxyz[i]
         geo = {}
+        catalog = {}
+        for pi, k, distance, received in P:
+            catalog.setdefault(pi, {})[k] = (distance, received)
+        catalogued = set()
         # per event, candidate (logl, T0, pass)
         per_ev = []
         for pe in pes:
@@ -717,6 +908,16 @@ def score_points(
                     G = geo.get((pi, k))
                     if G is None:
                         G = geo[(pi, k)] = _PassGeom(pl, g, k, wmax, c)
+                if (pi, k) not in catalogued:
+                    if G is not None:
+                        catalog[pi].update(G.minima)
+                    else:
+                        lo, hi = max(0, k - wmax), min(len(pl.tau), k + wmax + 1)
+                        distance = np.linalg.norm(pl.pos[lo:hi] - g, axis=1)
+                        catalog[pi].update(
+                            _range_minima(pl.tau[lo:hi], distance, c, lo)
+                        )
+                    catalogued.add((pi, k))
                 # cheap scale-free prefilter: the predicted Doppler span over the
                 # event's duration must be able to cover the observed span
                 if not pe.bb:
@@ -742,16 +943,6 @@ def score_points(
                     chi2 = -2.0 * ll / pe.chi2_den
                     cand.append(_Candidate(ll, T0, pi, k, rm, sc, chi2))
             per_ev.append(cand)
-        hyps = sorted({round(cnd.t0, 1) for cand in per_ev for cnd in cand})
-        if not hyps:
-            # no event matched any pass: still score "all missed" (+ silence)
-            hyps = (
-                [round(0.5 * (t0_window[0] + t0_window[1]), 1)]
-                if t0_window
-                else sorted({round(tr - events[0].t_cpa, 1) for *_x, tr in P})
-                if events
-                else [0.0]
-            )
         # close tonal passes that could charge the silence penalty
         # (penalty computed once per pass; same expression, so bit-identical)
         quiet = [
@@ -759,23 +950,60 @@ def score_points(
             for pi, k, rm, tr in P
             if rm <= opts.r_silence_m and (opts.include_jets or tonal_pl[pi])
         ]
+        catalogs = {
+            pi: sorted(minima.items(), key=lambda row: row[1][1])
+            for pi, minima in catalog.items()
+        }
+        hyps = _clock_hypotheses(
+            per_ev,
+            pes,
+            catalogs,
+            quiet,
+            opts.dt_tol_s,
+            clip_dur,
+            (t0lo, t0hi) if t0_window else None,
+        )
+        canonical_cache = {}
         best = (-np.inf, None, None)
+        best_agreement = np.inf
         for T0h in hyps:
             if t0_window and not (t0lo <= T0h <= t0hi):
                 continue
             eligible = [
-                [c for c in cand if abs(c.t0 - T0h) <= opts.dt_tol_s] for cand in per_ev
+                _canonical_candidates(
+                    candidates, pe, T0h, catalogs, planes, g, c, opts, canonical_cache
+                )
+                for candidates, pe in zip(per_ev, pes)
             ]
+            for ei, candidates in enumerate(eligible):
+                if getattr(events[ei], "likely_ground_vehicle", False) and candidates:
+                    # Optional evidence is a uniform aircraft mixture, not a
+                    # sum that grows with the number of plausible aircraft.
+                    # A nuisance proposal index exists under the null too:
+                    # its common prior cancels in the conditional best-shape
+                    # assignment, so ambiguity does not erase returned support.
+                    logprior = -float(np.log(len(candidates)))
+                    eligible[ei] = [
+                        replace(c, mixture_logprior=logprior) for c in candidates
+                    ]
             unexplained = {
                 key: penalty
                 for key, tr, penalty in quiet
                 if T0h <= tr <= T0h + clip_dur
             }
             tot, used = _joint_association(
-                eligible, miss, unexplained, opts.marginalize
+                eligible,
+                miss,
+                unexplained,
+                opts.marginalize,
+                state_budget=opts.association_state_budget,
             )
-            if tot > best[0]:
+            agreement = sum((candidate.t0 - T0h) ** 2 for _, candidate in used)
+            if not used:
+                agreement = (T0h - ((t0lo + t0hi) / 2 if t0_window else 0)) ** 2
+            if tot > best[0] or (tot == best[0] and agreement < best_agreement):
                 best = (tot, T0h, used)
+                best_agreement = agreement
         logl[i], t0[i] = best[0], (best[1] if best[1] is not None else np.nan)
         if best[2] is not None:
             matches[i] = [
@@ -784,6 +1012,13 @@ def score_points(
                     "aircraft": planes[candidate.plane_idx].label,
                     "hex": planes[candidate.plane_idx].hex,
                     "class": planes[candidate.plane_idx].cls,
+                    "event_ground_like": bool(
+                        getattr(events[e_i], "likely_ground_vehicle", False)
+                    ),
+                    "geometry_prior_ignored": bool(
+                        getattr(events[e_i], "likely_ground_vehicle", False)
+                    ),
+                    "multiple_cpas_in_support": candidate.multiple_cpas_in_support,
                     "cpa_index": candidate.k_cpa,
                     "cpa_receive_unix": float(
                         planes[candidate.plane_idx].tau[candidate.k_cpa]
@@ -809,7 +1044,12 @@ def n_consistent_matches(matches, chi2_max=6.0, opts: Options | None = None):
     n = 0
     for m in matches:
         ch = m.get("chi2nu", np.inf)
-        if np.isfinite(ch) and ch <= chi2_max and m.get("cpa_ok", True):
+        if (
+            np.isfinite(ch)
+            and ch <= chi2_max
+            and m.get("cpa_ok", True)
+            and not m.get("multiple_cpas_in_support", False)
+        ):
             n += 1
     return n
 
