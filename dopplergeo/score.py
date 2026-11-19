@@ -37,6 +37,8 @@ class Plane:
     _vel: np.ndarray | None = field(default=None, repr=False, compare=False)
     _fwd: np.ndarray | None = field(default=None, repr=False, compare=False)
     _uniform: bool | None = field(default=None, repr=False, compare=False)
+    _anchor_xy: np.ndarray | None = field(default=None, repr=False, compare=False)
+    _anchor_extent: np.ndarray | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -358,7 +360,20 @@ def find_passes(planes, gxyz, opts: Options, c: float):
     for pi, pl in enumerate(planes):
         # candidate points within r_max horizontally of any track sample
         near = set()
-        for idx in tree.query_ball_point(pl.pos[::5, :2], rmax):
+        if pl._anchor_xy is None:
+            xy = np.asarray(pl.pos[:, :2], dtype=float)
+            pl._anchor_xy = xy[::5].copy()
+            displacement = np.linalg.norm(
+                xy - np.repeat(pl._anchor_xy, 5, axis=0)[: len(xy)], axis=1
+            )
+            pl._anchor_extent = np.maximum.reduceat(
+                displacement, np.arange(0, len(xy), 5)
+            )
+        # Triangle inequality: a point within r_max of an omitted sample is
+        # within r_max + its displacement of that sample's preceding anchor.
+        # The per-anchor cover is measured, not inferred from speed/smoothness.
+        radii = np.nextafter(rmax + pl._anchor_extent, np.inf)
+        for idx in tree.query_ball_point(pl._anchor_xy, radii):
             near.update(idx)
         if not near:
             continue

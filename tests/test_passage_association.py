@@ -117,6 +117,21 @@ def test_inbound_track_endpoint_is_not_an_observed_cpa():
     assert score.find_passes([pl], np.zeros((1, 3)), score.Options(), C) == [[]]
 
 
+def test_stride_prefilter_covers_a_tangent_pass_between_anchors():
+    t = np.arange(21.0)
+    radius, altitude = 11999.9, 120.0
+    y = np.sqrt(radius**2 - altitude**2)
+    pos = np.c_[(t - 2) * 100, np.full_like(t, y), np.full_like(t, altitude)]
+    plane = score.Plane("tangent", "piston", t, pos)
+    assert np.linalg.norm(pos[::5, :2], axis=1).min() > 12000
+    passes = score.find_passes(
+        [plane], np.zeros((1, 3)), score.Options(r_max_m=12000), C
+    )[0]
+    assert len(passes) == 1
+    assert passes[0][1] == 2
+    assert passes[0][2] == pytest.approx(radius)
+
+
 def test_broad_phase_neighbor_alias_cannot_duplicate_one_accepted_pass():
     t = np.arange(-100.0, 401.0)
     angle = 2 * np.pi * t / 50
