@@ -67,6 +67,7 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 | `--region` | `lat,lon,radius_km`, radius at most 60 km. Required unless the file carries GPS tags. If it does, those coordinates are reported directly (`method: metadata-gps`). |
 | `--offline` | Use only the cache (ADS-B crops, DEM, weather). No network. |
 | `--time-tolerance` | Seconds of slack around an ISO datetime. Default 600. The evaluation uses 30. |
+| `--cpa-search` | Bounded phase search around each fitted closest-approach time, seconds. Default 60. This is a search budget, not a confidence interval; increasing it costs compute and does not relax the six-second agreement between events on a shared recording clock. |
 | `--include-jets` | Also score known jet types against tonal events. Default off: jets rarely give tonal lines and add false matches. Broadband events always consider jets. |
 | `--broadband` | Also detect and score broadband (ground-reflection) jet passes. Experimental, default off. In the held-out run it gave more answers but a slightly worse median (see results). |
 | `--temper-extra` | Posterior temper on top of the Birge ratio, which sets how wide the 68 %/95 % areas are. Default 4, calibrated on tune. Larger values give wider, safer areas. |
@@ -76,7 +77,13 @@ python3 skills/aircraft-doppler-geolocation/scripts/make_synthetic_test.py   # p
 
 `locate` checks that a region and a date (hint or file metadata) are available before it decodes any audio, so a missing hint fails in milliseconds; the report then has no `events`.
 
-The same options from Python: `locate.locate(..., broadband=True, temper_extra=4, plots=True, cache=True)` and `locate.detect_only(rec, out, broadband=True, plots=True, cache=True)`. Other scorer settings are `dopplergeo.score.Options` fields, which the eval harness sets with `--set key=value`.
+The same options from Python: `locate.locate(..., broadband=True, temper_extra=4, cpa_search_s=60, plots=True, cache=True)` and `locate.detect_only(rec, out, broadband=True, plots=True, cache=True)`. Other scorer settings are `dopplergeo.score.Options` fields, which the eval harness sets with `--set key=value`.
+
+**CPA phase and shared clock are different constraints.** A good straight-pass fit to a turning or climbing aircraft can put its fitted CPA tens of seconds away from the real track's geometric CPA. The scorer searches that phase with `cpa_search_s` (default 60 seconds), using `cpa_step_s` coarse proposals (default 2 seconds) and `dt_step_s` refinement (default 0.5 seconds). `dt_tol_s` remains the allowed agreement between events' recording-start estimates (default 6 seconds); the date-hint search window retains this padding. A finite phase budget can still miss more asymmetric passes: report the configured budget and enlarge it explicitly when justified. Ground and straight-fit flags are heuristics, not aircraft identification or calibrated geometric uncertainty.
+
+Associations use a particular local pass, so separate encounters with the same continuous aircraft track can explain different events. A pass can explain at most one event. Conflicting associations are solved jointly, and marginalization sums only valid joint assignments; input event order does not change the likelihood. Track endpoints are coverage limits and are excluded as observed CPAs. Matches include `cpa_index`, `cpa_receive_unix` and their individual `recording_start_unix` for inspection.
+
+These scoring corrections change likelihoods and candidate rankings. The historical evaluation numbers and posterior calibration below have not been rerun for these changes; they do not establish the current version's real-world accuracy.
 
 **Cache.** Downloads are cached in `~/.cache/doppler-geo`, or in `$DOPPLER_GEO_CACHE` if set: ADS-B crops per day and region, DEM tiles, weather and the type table. Writes are atomic, so parallel runs can share one cache. Only the crop of each adsb.lol day is stored, not the ~3 GB release.
 

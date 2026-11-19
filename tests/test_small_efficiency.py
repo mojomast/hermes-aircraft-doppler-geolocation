@@ -1,4 +1,4 @@
-"""Small-efficiency pass: identical numbers to f65a6a2, and skipped work stays skipped."""
+"""Detector numerics, prepared scorer equivalence, and skipped work stays skipped."""
 
 import importlib.util
 import json
@@ -13,7 +13,6 @@ import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ref_detect_f65a6a2 as ref_detect
-import ref_score_f65a6a2 as ref_score
 from test_v02 import LAT0, LON0, SR, scenario
 
 from dopplergeo import detect, score
@@ -67,17 +66,23 @@ def test_score_points_identical_with_silence():
     x, tracks, _obs = scenario(crossing=True)
     events, _ = detect.detect_events(x, SR)
     pn = score.prepare_planes(tracks, LAT0, LON0, include_jets=True)
-    po = ref_score.prepare_planes(tracks, LAT0, LON0, include_jets=True)
     xs, ys = score.grid(0, 0, 4000, 250)
     g = np.c_[xs, ys, np.full(len(xs), 151.5)]
     # drop one event so close passes go unexplained and the silence penalty bites
     for evs in (events, events[:1], []):
         for kw in ({}, {"include_jets": True}, {"silence_penalty": 11.0}):
             for t0w in (None, (-20.0, 20.0)):
-                a = ref_score.score_points(
-                    evs, po, g, 343.0, ref_score.Options(**kw), t0w, 420
+                a = score.score_points(evs, pn, g, 343.0, score.Options(**kw), t0w, 420)
+                b = score.score_points(
+                    evs,
+                    pn,
+                    g,
+                    343.0,
+                    score.Options(**kw),
+                    t0w,
+                    420,
+                    prepared=score.prepare_events(evs),
                 )
-                b = score.score_points(evs, pn, g, 343.0, score.Options(**kw), t0w, 420)
                 np.testing.assert_array_equal(a.logl, b.logl)
                 np.testing.assert_array_equal(a.t0, b.t0)
                 assert a.matches == b.matches

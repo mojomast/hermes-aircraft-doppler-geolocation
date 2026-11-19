@@ -54,6 +54,7 @@ def locate_tool(params, **_kwargs) -> str:
             offline=bool(args.get("offline", False)),
             out_dir=args.get("out_dir") or None,
             time_tolerance_s=float(args.get("time_tolerance_s", 600)),
+            cpa_search_s=float(args.get("cpa_search_s", 60)),
             include_jets=bool(args.get("include_jets", False)),
             broadband=bool(args.get("broadband", False)),
             temper_extra=(
@@ -142,6 +143,11 @@ def tool_specs() -> list[dict]:
                     "time_tolerance_s": {
                         "type": "number",
                         "description": "Slack around an ISO datetime hint. Default 600.",
+                    },
+                    "cpa_search_s": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Bounded phase search around each fitted CPA in seconds. Default 60. A search budget, not confidence; does not relax shared-clock agreement.",
                     },
                     "include_jets": {"type": "boolean"},
                     "broadband": bb,

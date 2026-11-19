@@ -119,6 +119,7 @@ def locate(
     progress=None,
     plots=True,
     cache=True,
+    cpa_search_s=60.0,
 ):
     """Locate a recording from flyover Doppler events and ADS-B.
 
@@ -128,7 +129,9 @@ def locate(
     file carries GPS). offline: use only cached ADS-B/DEM/weather. broadband: also
     detect ground-reflection (multipath-delay) jet passes. temper_extra: override
     score.Options.temper_extra (95% area calibration, default 4). tracks /
-    elevation_fn / tar_parts let tests and power users inject data.
+    elevation_fn / tar_parts let tests and power users inject data. cpa_search_s
+    bounds the phase search around each fitted CPA; it does not widen the
+    six-second agreement of events on one shared recording start time.
     Returns a JSON-able dict; writes report.json and heatmap.png to out_dir.
     """
     notes = []
@@ -206,7 +209,9 @@ def locate(
     lat0, lon0, rad_km = region
     rad_km = min(rad_km, max_radius_km)
     okw = {} if temper_extra is None else {"temper_extra": float(temper_extra)}
-    opts = score.Options(include_jets=include_jets, **okw)
+    opts = score.Options(
+        include_jets=include_jets, cpa_search_s=float(cpa_search_s), **okw
+    )
     day_start = dt.datetime(day.year, day.month, day.day, tzinfo=dt.UTC).timestamp()
     if when is not None:
         t0w = (when.timestamp() - time_tolerance_s, when.timestamp() + time_tolerance_s)
@@ -308,6 +313,8 @@ def locate(
         },
         search={
             "region": {"lat": lat0, "lon": lon0, "radius_km": rad_km},
+            "cpa_search_s": opts.cpa_search_s,
+            "clock_agreement_s": opts.dt_tol_s,
             "t0_window_utc": [
                 dt.datetime.fromtimestamp(v, dt.UTC).isoformat() for v in t0w
             ],

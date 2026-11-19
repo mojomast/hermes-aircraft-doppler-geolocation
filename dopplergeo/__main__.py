@@ -41,6 +41,12 @@ def main(argv=None):
         "--offline", action="store_true", help="use only cached ADS-B, DEM and weather"
     )
     lc.add_argument("--time-tolerance", type=float, default=600.0)
+    lc.add_argument(
+        "--cpa-search",
+        type=float,
+        default=60.0,
+        help="bounded phase search around fitted CPA, seconds (default 60); does not relax shared-clock agreement",
+    )
     lc.add_argument("--include-jets", action="store_true")
     lc.add_argument(
         "--broadband",
@@ -83,6 +89,7 @@ def main(argv=None):
             offline=a.offline,
             out_dir=a.out,
             time_tolerance_s=a.time_tolerance,
+            cpa_search_s=a.cpa_search,
             include_jets=a.include_jets,
             broadband=a.broadband,
             temper_extra=a.temper_extra,

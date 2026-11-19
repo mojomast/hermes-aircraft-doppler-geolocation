@@ -1,4 +1,8 @@
-"""Prepared scoring must reproduce the v0.3.0 scorer bit-for-bit on fixed inputs."""
+"""Prepared kernels preserve numerical results; association semantics are tested separately.
+
+The frozen scorer remains a reference for unchanged physics kernels. Aggregate
+scores intentionally differ after occurrence/CPA/joint-association fixes.
+"""
 
 import sys
 from pathlib import Path
@@ -41,7 +45,10 @@ def test_find_passes_identical():
         g = _grid()
         a = ref.find_passes(old, g, ref.Options(), 343.0)
         b = score.find_passes(new, g, score.Options(), 343.0)
-        assert a == b and sum(map(len, a)) > 100
+        interior = [
+            [p for p in passes if 0 < p[1] < len(old[p[0]].tau) - 1] for passes in a
+        ]
+        assert interior == b and sum(map(len, b)) > 100
 
 
 def test_slice_velocity_and_predictions_identical():
@@ -73,47 +80,27 @@ def _same_result(a, b):
     assert a.matches == b.matches
 
 
-def test_score_points_and_search_identical_tonal():
+def test_prepared_event_scoring_identical_tonal():
     x, tracks, _obs = scenario(crossing=True)
     events, _ = detect.detect_events(x, SR)
     assert events
     pn = score.prepare_planes(tracks, LAT0, LON0)
-    po = ref.prepare_planes(tracks, LAT0, LON0)
     xs, ys = score.grid(0, 0, 4000, 250)
     g = np.c_[xs, ys, np.full(len(xs), 151.5)]
     for kw in ({}, {"miss_null": True}, {"marginalize": False, "sigma_model": 0.02}):
         for t0w in (None, (-20.0, 20.0)):
-            a = ref.score_points(events, po, g, 343.0, ref.Options(**kw), t0w, 420)
-            b = score.score_points(events, pn, g, 343.0, score.Options(**kw), t0w, 420)
+            a = score.score_points(events, pn, g, 343.0, score.Options(**kw), t0w, 420)
+            b = score.score_points(
+                events,
+                pn,
+                g,
+                343.0,
+                score.Options(**kw),
+                t0w,
+                420,
+                prepared=score.prepare_events(events),
+            )
             _same_result(a, b)
-    ra = ref.search(
-        events,
-        po,
-        LAT0,
-        LON0,
-        5000,
-        lambda la, lo: np.full(len(la), 150.0),
-        343.0,
-        ref.Options(),
-        None,
-        420,
-    )
-    rb = score.search(
-        events,
-        pn,
-        LAT0,
-        LON0,
-        5000,
-        lambda la, lo: np.full(len(la), 150.0),
-        343.0,
-        score.Options(),
-        None,
-        420,
-    )
-    assert ra["best"] == rb["best"]
-    for La, Lb in zip(ra["levels"], rb["levels"]):
-        np.testing.assert_array_equal(La["logl"], Lb["logl"])
-        assert La["temperature"] == Lb["temperature"] and La["a95_m2"] == Lb["a95_m2"]
 
 
 def test_score_points_identical_broadband():
@@ -135,11 +122,19 @@ def test_score_points_identical_broadband():
     assert ev
     tr = [synth.as_adsb("abc", t, la, lo, al, cls="jet", typ="A320")]
     pn = score.prepare_planes(tr, LAT0, LON0, include_jets=True)
-    po = ref.prepare_planes(tr, LAT0, LON0, include_jets=True)
     xs, ys = score.grid(0, 0, 3000, 250)
     g = np.c_[xs, ys, np.zeros(len(xs))]
-    a = ref.score_points(ev, po, g, 343.0, ref.Options(), (-5, 5), 200)
-    b = score.score_points(ev, pn, g, 343.0, score.Options(), (-5, 5), 200)
+    a = score.score_points(ev, pn, g, 343.0, score.Options(), (-5, 5), 200)
+    b = score.score_points(
+        ev,
+        pn,
+        g,
+        343.0,
+        score.Options(),
+        (-5, 5),
+        200,
+        prepared=score.prepare_events(ev),
+    )
     _same_result(a, b)
 
 

@@ -56,6 +56,25 @@ def test_tools_expose_and_pass_broadband(monkeypatch):
     assert seen["locate"][1]["temper_extra"] is None
 
 
+def test_cpa_search_budget_is_exposed_without_changing_time_tolerance(
+    monkeypatch, capsys
+):
+    seen = _capture(monkeypatch)
+    assert (
+        cli.main(["locate", "x.wav", "--cpa-search", "90", "--time-tolerance", "2"])
+        == 0
+    )
+    assert seen["locate"][1]["cpa_search_s"] == 90
+    assert seen["locate"][1]["time_tolerance_s"] == 2
+    specs = {
+        s["name"]: s["schema"]["parameters"]["properties"] for s in tools.tool_specs()
+    }
+    assert "cpa_search_s" in specs["doppler_locate"]
+    tools.locate_tool({"recording": "x.wav", "cpa_search_s": 45})
+    assert seen["locate"][1]["cpa_search_s"] == 45
+    capsys.readouterr()
+
+
 def test_detect_only_broadband_finds_synthetic_jet_pass(tmp_path):
     t = np.arange(0, 200, 1.0)
     la, lo, al = synth.track(
